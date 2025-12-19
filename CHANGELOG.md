@@ -2,6 +2,11 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.0.5] - 2025-12-19
+
+### Improved
+- 优化生图工具（generate_image）描述，添加提示说明生成的图片是实色背景而非透明底图
+
 ## [1.0.4] - 2025-12-19
 
 ### Fixed
