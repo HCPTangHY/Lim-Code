@@ -287,7 +287,10 @@ const zhCN: LanguageMessages = {
                 restoreTooltip: '恢复工作区到此存档点',
                 fileCount: '{count} 个文件',
                 yesterday: '昨天',
-                daysAgo: '{days}天前'
+                daysAgo: '{days}天前',
+                restoreConfirmTitle: '恢复存档',
+                restoreConfirmMessage: '确定要将工作区恢复到此存档点吗？这将覆盖当前工作区中的相应文件，此操作不可恢复。',
+                restoreConfirmBtn: '恢复'
             },
             continue: {
                 title: '对话等待中',
@@ -1158,7 +1161,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.24',
+                    version: '版本：1.0.25',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
