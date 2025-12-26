@@ -1462,13 +1462,13 @@ export class ChatHandler {
             const confirmFunctionResponseParts = confirmedResult.multimodalAttachments && confirmedResult.multimodalAttachments.length > 0
                 ? [...confirmedResult.multimodalAttachments, ...allResponseParts]
                 : allResponseParts;
-                
+
             await this.conversationManager.addContent(conversationId, {
                 role: 'user',
                 parts: confirmFunctionResponseParts,
                 isFunctionResponse: true
             });
-            
+
             // 计算工具响应消息的 token 数
             await this.preCountUserMessageTokens(conversationId, config.type);
 
@@ -2115,50 +2115,50 @@ export class ChatHandler {
         // 如果没有任何消息，直接返回空历史
         if (!hasEstimatedTokens) {
             const history = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
-            return { history, trimStartIndex: 0 };
+            return this.cleanHistoryStart(history, 0);
         }
-        
+
         // 检查是否启用上下文阈值检测
         if (!config.contextThresholdEnabled) {
             // 未启用阈值检测，直接返回从起始索引开始的历史
             if (effectiveStartIndex === 0) {
                 const history = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
-                return { history, trimStartIndex: 0 };
+                return this.cleanHistoryStart(history, 0);
             }
             const fullApiHistory = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
             const trimRatio = effectiveStartIndex / fullHistory.length;
             const apiStartIndex = Math.floor(fullApiHistory.length * trimRatio);
-            return { history: fullApiHistory.slice(apiStartIndex), trimStartIndex: effectiveStartIndex };
+            return this.cleanHistoryStart(fullApiHistory.slice(apiStartIndex), effectiveStartIndex);
         }
-        
+
         // 获取最大上下文和阈值
         const maxContextTokens = (config as any).maxContextTokens || 128000;
         const thresholdConfig = config.contextThreshold ?? '80%';
         const threshold = this.calculateThreshold(thresholdConfig, maxContextTokens);
-        
+
         // 如果估算总 token 未超过阈值，直接返回从起始索引开始的历史
         if (estimatedTotalTokens <= threshold) {
             if (effectiveStartIndex === 0) {
                 const history = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
-                return { history, trimStartIndex: 0 };
+                return this.cleanHistoryStart(history, 0);
             }
             const fullApiHistory = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
             const trimRatio = effectiveStartIndex / fullHistory.length;
             const apiStartIndex = Math.floor(fullApiHistory.length * trimRatio);
-            return { history: fullApiHistory.slice(apiStartIndex), trimStartIndex: effectiveStartIndex };
+            return this.cleanHistoryStart(fullApiHistory.slice(apiStartIndex), effectiveStartIndex);
         }
-        
+
         // 超过阈值，需要裁剪
         // 现在 roundTokenInfos 只包含 effectiveStartIndex 之后的回合，不需要再过滤
         const roundsAfterStart = roundTokenInfos;
-        
+
         // 至少需要保留当前回合（最后一个回合）
         if (roundsAfterStart.length <= 1) {
             // 即使只有一个回合也要返回从起始索引开始的历史
             const fullApiHistory = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
             const trimRatio = effectiveStartIndex / fullHistory.length;
             const apiStartIndex = Math.floor(fullApiHistory.length * trimRatio);
-            return { history: fullApiHistory.slice(apiStartIndex), trimStartIndex: effectiveStartIndex };
+            return this.cleanHistoryStart(fullApiHistory.slice(apiStartIndex), effectiveStartIndex);
         }
         
         // 计算额外裁剪的 token 数
@@ -2196,7 +2196,7 @@ export class ChatHandler {
             const fullApiHistory = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
             const trimRatio = effectiveStartIndex / fullHistory.length;
             const apiStartIndex = Math.floor(fullApiHistory.length * trimRatio);
-            return { history: fullApiHistory.slice(apiStartIndex), trimStartIndex: effectiveStartIndex };
+            return this.cleanHistoryStart(fullApiHistory.slice(apiStartIndex), effectiveStartIndex);
         }
         
         // 计算在原始历史中的起始索引
@@ -2212,19 +2212,59 @@ export class ChatHandler {
         let trimmedHistory = fullApiHistory.slice(apiStartIndex);
         let finalTrimStartIndex = trimStartIndex;
         
-        // 确保历史以 user 消息开始（Gemini API 要求）
-        if (trimmedHistory.length > 0 && trimmedHistory[0].role !== 'user') {
-            const firstUserIndex = trimmedHistory.findIndex(m => m.role === 'user');
-            if (firstUserIndex > 0) {
-                trimmedHistory = trimmedHistory.slice(firstUserIndex);
-                // 调整起始索引
-                finalTrimStartIndex = trimStartIndex + firstUserIndex;
-            }
-        }
-        
-        return { history: trimmedHistory, trimStartIndex: finalTrimStartIndex };
+        // 清理历史开头的无效消息（非 user 消息、孤立的 functionResponse）
+        return this.cleanHistoryStart(trimmedHistory, finalTrimStartIndex);
     }
-    
+
+    /**
+     * 清理历史开头的无效消息
+     *
+     * 确保历史以有效的 user 消息开始：
+     * 1. 跳过开头的非 user 消息（Gemini API 要求）
+     * 2. 跳过孤立的 functionResponse 消息（对应的 functionCall 已被裁剪/过滤）
+     *
+     * @param history 要清理的历史
+     * @param trimStartIndex 当前的裁剪起始索引
+     * @returns 清理后的历史和调整后的裁剪索引
+     */
+    private cleanHistoryStart(
+        history: Content[],
+        trimStartIndex: number
+    ): { history: Content[]; trimStartIndex: number } {
+        if (history.length === 0) {
+            return { history, trimStartIndex };
+        }
+
+        let startIndex = 0;
+
+        // 跳过开头的非 user 消息
+        while (startIndex < history.length && history[startIndex].role !== 'user') {
+            startIndex++;
+        }
+
+        // 跳过开头的 functionResponse 消息（它们没有对应的 functionCall）
+        while (startIndex < history.length) {
+            const msg = history[startIndex];
+            if (msg.role !== 'user') break;
+
+            // 检查是否为纯 functionResponse 消息
+            const isFunctionResponse = msg.parts?.every(p => p.functionResponse !== undefined);
+            if (!isFunctionResponse) break;
+
+            // 这是 functionResponse，需要跳过
+            startIndex++;
+        }
+
+        if (startIndex > 0) {
+            return {
+                history: history.slice(startIndex),
+                trimStartIndex: trimStartIndex + startIndex
+            };
+        }
+
+        return { history, trimStartIndex };
+    }
+
     /**
      * 获取用于 API 调用的历史（保持向后兼容的简化版本）
      */
@@ -2236,7 +2276,7 @@ export class ChatHandler {
         const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions);
         return result.history;
     }
-    
+
     /**
      * 检查消息的 parts 中是否包含思考内容
      *
