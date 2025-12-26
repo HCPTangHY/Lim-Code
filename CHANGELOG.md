@@ -3,6 +3,19 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.24] - 2025-12-26
+
+### Added
+  - 在工具确认界面支持读取输入框内容作为批注发送给 AI
+  - 当有待确认工具时，发送输入框内容将自动触发“全部拒绝”并带上批注消息
+  - 后端 ChatHandler 支持在处理工具结果前插入用户批注消息并重新计算 Token
+  - 优化 diff 管理器：在非自动保存模式下，用户手动保存文件后自动关闭 diff 标签页
+  - 前端chatStore 增加待确认工具检测逻辑及 rejectPendingToolsWithAnnotation 方法
+  - 调整输入框逻辑，允许在工具待确认状态下发送文本内容
+
+### Fixed
+  - 修复输入框无法右键粘贴问题
+
 ## [1.0.23] - 2025-12-25
 
 ### Improved

@@ -134,7 +134,7 @@ function handleNumberChange(optionKey: string, event: any) {
         placeholder="1.0"
         :disabled="!isOptionEnabled('temperature')"
         :class="{ disabled: !isOptionEnabled('temperature') }"
-        @change="(e: any) => handleNumberChange('temperature', e)"
+        @input="(e: any) => handleNumberChange('temperature', e)"
       />
       <span class="option-hint">{{ t('components.channels.common.temperature.hint') }}</span>
     </div>
@@ -158,7 +158,7 @@ function handleNumberChange(optionKey: string, event: any) {
         :placeholder="t('components.channels.common.maxTokens.placeholder')"
         :disabled="!isOptionEnabled('max_tokens')"
         :class="{ disabled: !isOptionEnabled('max_tokens') }"
-        @change="(e: any) => handleNumberChange('max_tokens', e)"
+        @input="(e: any) => handleNumberChange('max_tokens', e)"
       />
     </div>
     
@@ -184,7 +184,7 @@ function handleNumberChange(optionKey: string, event: any) {
         placeholder="1.0"
         :disabled="!isOptionEnabled('top_p')"
         :class="{ disabled: !isOptionEnabled('top_p') }"
-        @change="(e: any) => handleNumberChange('top_p', e)"
+        @input="(e: any) => handleNumberChange('top_p', e)"
       />
       <span class="option-hint">{{ t('components.channels.common.topP.hint') }}</span>
     </div>
@@ -211,7 +211,7 @@ function handleNumberChange(optionKey: string, event: any) {
         placeholder="0"
         :disabled="!isOptionEnabled('frequency_penalty')"
         :class="{ disabled: !isOptionEnabled('frequency_penalty') }"
-        @change="(e: any) => handleNumberChange('frequency_penalty', e)"
+        @input="(e: any) => handleNumberChange('frequency_penalty', e)"
       />
       <span class="option-hint">{{ t('components.channels.openai.frequencyPenalty.hint') }}</span>
     </div>
@@ -238,7 +238,7 @@ function handleNumberChange(optionKey: string, event: any) {
         placeholder="0"
         :disabled="!isOptionEnabled('presence_penalty')"
         :class="{ disabled: !isOptionEnabled('presence_penalty') }"
-        @change="(e: any) => handleNumberChange('presence_penalty', e)"
+        @input="(e: any) => handleNumberChange('presence_penalty', e)"
       />
       <span class="option-hint">{{ t('components.channels.openai.presencePenalty.hint') }}</span>
     </div>
@@ -377,7 +377,7 @@ function handleNumberChange(optionKey: string, event: any) {
             :value="config.historyThinkingRounds ?? -1"
             placeholder="-1"
             min="-1"
-            @change="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
+            @input="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
           />
           <span class="option-hint">{{ t('components.channels.common.historyThinking.roundsHint') }}</span>
         </div>

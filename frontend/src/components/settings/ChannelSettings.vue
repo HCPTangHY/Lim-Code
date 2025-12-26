@@ -694,7 +694,7 @@ onMounted(async () => {
           :value="currentConfig.url"
           type="text"
           :placeholder="t('components.settings.channelSettings.form.apiUrl.placeholder')"
-          @change="(e: any) => updateConfigField('url', e.target.value)"
+          @input="(e: any) => updateConfigField('url', e.target.value)"
         />
       </div>
       
@@ -705,7 +705,7 @@ onMounted(async () => {
             :type="showApiKey ? 'text' : 'password'"
             :value="currentConfig.apiKey"
             :placeholder="t('components.settings.channelSettings.form.apiKey.placeholder')"
-            @change="(e: any) => updateConfigField('apiKey', e.target.value)"
+            @input="(e: any) => updateConfigField('apiKey', e.target.value)"
           />
           <button
             class="input-action-btn"
@@ -892,7 +892,7 @@ onMounted(async () => {
           :value="currentConfig.timeout"
           type="number"
           :placeholder="t('components.settings.channelSettings.form.timeout.placeholder')"
-          @change="(e: any) => updateConfigField('timeout', Number(e.target.value))"
+          @input="(e: any) => updateConfigField('timeout', Number(e.target.value))"
         />
       </div>
       
@@ -902,7 +902,7 @@ onMounted(async () => {
           :value="currentConfig.maxContextTokens || 128000"
           type="number"
           :placeholder="t('components.settings.channelSettings.form.maxContextTokens.placeholder')"
-          @change="(e: any) => updateConfigField('maxContextTokens', Number(e.target.value))"
+          @input="(e: any) => updateConfigField('maxContextTokens', Number(e.target.value))"
         />
         <span class="field-hint">{{ t('components.settings.channelSettings.form.maxContextTokens.hint') }}</span>
       </div>
@@ -937,7 +937,7 @@ onMounted(async () => {
                 :placeholder="t('components.settings.channelSettings.form.contextManagement.threshold.placeholder')"
                 :disabled="!contextThresholdEnabled"
                 :class="{ disabled: !contextThresholdEnabled }"
-                @change="(e: any) => updateContextThreshold(e.target.value)"
+                @input="(e: any) => updateContextThreshold(e.target.value)"
               />
               <span class="option-hint">
                 {{ t('components.settings.channelSettings.form.contextManagement.threshold.hint') }}
@@ -954,7 +954,7 @@ onMounted(async () => {
                 :placeholder="t('components.settings.channelSettings.form.contextManagement.extraCut.placeholder')"
                 :disabled="!contextThresholdEnabled"
                 :class="{ disabled: !contextThresholdEnabled }"
-                @change="(e: any) => updateContextTrimExtraCut(e.target.value)"
+                @input="(e: any) => updateContextTrimExtraCut(e.target.value)"
               />
               <span class="option-hint">
                 {{ t('components.settings.channelSettings.form.contextManagement.extraCut.hint') }}
@@ -1148,7 +1148,7 @@ onMounted(async () => {
                 max="10"
                 :disabled="!retryEnabled"
                 :class="{ disabled: !retryEnabled }"
-                @change="(e: any) => updateRetryCount(Number(e.target.value))"
+                @input="(e: any) => updateRetryCount(Number(e.target.value))"
               />
               <span class="option-hint">{{ t('components.settings.channelSettings.form.autoRetry.retryCount.hint') }}</span>
             </div>
@@ -1165,7 +1165,7 @@ onMounted(async () => {
                 step="1000"
                 :disabled="!retryEnabled"
                 :class="{ disabled: !retryEnabled }"
-                @change="(e: any) => updateRetryInterval(Number(e.target.value))"
+                @input="(e: any) => updateRetryInterval(Number(e.target.value))"
               />
               <span class="option-hint">{{ t('components.settings.channelSettings.form.autoRetry.retryInterval.hint') }}</span>
             </div>

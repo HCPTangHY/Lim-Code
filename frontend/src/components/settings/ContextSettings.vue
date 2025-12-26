@@ -268,7 +268,7 @@ function stopAutoRefresh() {
                 max="100"
                 :disabled="!config.includeWorkspaceFiles"
                 class="number-input"
-                @change="(e: any) => updateConfig('maxFileDepth', Number(e.target.value))"
+                @input="(e: any) => updateConfig('maxFileDepth', Number(e.target.value))"
               />
               <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
             </div>
@@ -305,7 +305,7 @@ function stopAutoRefresh() {
                 max="100"
                 :disabled="!config.includeOpenTabs"
                 class="number-input"
-                @change="(e: any) => updateConfig('maxOpenTabs', Number(e.target.value))"
+                @input="(e: any) => updateConfig('maxOpenTabs', Number(e.target.value))"
               />
               <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
             </div>
@@ -409,7 +409,7 @@ function stopAutoRefresh() {
                 max="100"
                 :disabled="!config.diagnostics?.enabled"
                 class="number-input"
-                @change="(e: any) => updateDiagnosticsConfig('maxDiagnosticsPerFile', Number(e.target.value))"
+                @input="(e: any) => updateDiagnosticsConfig('maxDiagnosticsPerFile', Number(e.target.value))"
               />
               <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
             </div>
@@ -425,7 +425,7 @@ function stopAutoRefresh() {
                 max="100"
                 :disabled="!config.diagnostics?.enabled"
                 class="number-input"
-                @change="(e: any) => updateDiagnosticsConfig('maxFiles', Number(e.target.value))"
+                @input="(e: any) => updateDiagnosticsConfig('maxFiles', Number(e.target.value))"
               />
               <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
             </div>

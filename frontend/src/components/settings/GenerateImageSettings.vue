@@ -104,7 +104,7 @@ onMounted(async () => {
           type="text"
           :value="imageConfig.url"
           :placeholder="t('components.settings.generateImageSettings.api.urlPlaceholder')"
-          @change="(e: any) => updateConfigField('url', e.target.value)"
+          @input="(e: any) => updateConfigField('url', e.target.value)"
         />
         <p class="field-hint">{{ t('components.settings.generateImageSettings.api.urlHint') }}</p>
       </div>
@@ -116,7 +116,7 @@ onMounted(async () => {
             :type="showApiKey ? 'text' : 'password'"
             :value="imageConfig.apiKey"
             :placeholder="t('components.settings.generateImageSettings.api.apiKeyPlaceholder')"
-            @change="(e: any) => updateConfigField('apiKey', e.target.value)"
+            @input="(e: any) => updateConfigField('apiKey', e.target.value)"
           />
           <button
             class="input-action-btn"
@@ -135,7 +135,7 @@ onMounted(async () => {
           type="text"
           :value="imageConfig.model"
           :placeholder="t('components.settings.generateImageSettings.api.modelPlaceholder')"
-          @change="(e: any) => updateConfigField('model', e.target.value)"
+          @input="(e: any) => updateConfigField('model', e.target.value)"
         />
         <p class="field-hint">{{ t('components.settings.generateImageSettings.api.modelHint') }}</p>
       </div>
@@ -227,7 +227,7 @@ onMounted(async () => {
           :value="imageConfig.maxBatchTasks"
           min="1"
           max="20"
-          @change="(e: any) => updateConfigField('maxBatchTasks', parseInt(e.target.value) || 5)"
+          @input="(e: any) => updateConfigField('maxBatchTasks', parseInt(e.target.value) || 5)"
         />
         <p class="field-hint">{{ t('components.settings.generateImageSettings.batch.maxTasksHint') }}</p>
       </div>
@@ -239,7 +239,7 @@ onMounted(async () => {
           :value="imageConfig.maxImagesPerTask"
           min="1"
           max="10"
-          @change="(e: any) => updateConfigField('maxImagesPerTask', parseInt(e.target.value) || 1)"
+          @input="(e: any) => updateConfigField('maxImagesPerTask', parseInt(e.target.value) || 1)"
         />
         <p class="field-hint">{{ t('components.settings.generateImageSettings.batch.maxImagesPerTaskHint') }}</p>
       </div>

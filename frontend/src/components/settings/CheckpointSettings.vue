@@ -644,7 +644,7 @@ onMounted(() => {
           <input
             type="text"
             :value="config.maxCheckpoints"
-            @change="(e: any) => { const v = parseInt(e.target.value); updateConfigField('maxCheckpoints', isNaN(v) ? -1 : v); }"
+            @input="(e: any) => { const v = parseInt(e.target.value); updateConfigField('maxCheckpoints', isNaN(v) ? -1 : v); }"
             :disabled="!config.enabled"
             class="number-input"
             placeholder="-1"

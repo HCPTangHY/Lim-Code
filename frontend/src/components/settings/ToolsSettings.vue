@@ -281,7 +281,7 @@ onMounted(() => {
             :value="maxToolIterations"
             min="-1"
             :disabled="isLoadingMaxIterations || isSavingMaxIterations"
-            @change="handleMaxIterationsChange"
+            @input="handleMaxIterationsChange"
           />
           <span class="unit">{{ t('components.settings.toolsSettings.maxIterations.unit') }}</span>
           <i

@@ -114,7 +114,7 @@ function updateThinkingConfig(field: string, value: any) {
         placeholder="1.0"
         :disabled="!isOptionEnabled('temperature')"
         :class="{ disabled: !isOptionEnabled('temperature') }"
-        @change="(e: any) => emit('update:option', 'temperature', Number(e.target.value))"
+        @input="(e: any) => emit('update:option', 'temperature', Number(e.target.value))"
       />
       <span class="option-hint">{{ t('components.channels.common.temperature.hint') }}</span>
     </div>
@@ -138,7 +138,7 @@ function updateThinkingConfig(field: string, value: any) {
         placeholder="8192"
         :disabled="!isOptionEnabled('maxOutputTokens')"
         :class="{ disabled: !isOptionEnabled('maxOutputTokens') }"
-        @change="(e: any) => emit('update:option', 'maxOutputTokens', Number(e.target.value))"
+        @input="(e: any) => emit('update:option', 'maxOutputTokens', Number(e.target.value))"
       />
     </div>
     
@@ -241,7 +241,7 @@ function updateThinkingConfig(field: string, value: any) {
             :placeholder="t('components.channels.gemini.thinking.budgetPlaceholder')"
             :disabled="!isOptionEnabled('thinkingConfig')"
             :class="{ disabled: !isOptionEnabled('thinkingConfig') }"
-            @change="(e: any) => updateThinkingConfig('thinkingBudget', Number(e.target.value))"
+            @input="(e: any) => updateThinkingConfig('thinkingBudget', Number(e.target.value))"
           />
           <span class="option-hint">{{ t('components.channels.gemini.thinking.budgetHint') }}</span>
         </div>
@@ -333,7 +333,7 @@ function updateThinkingConfig(field: string, value: any) {
             :value="config.historyThinkingRounds ?? -1"
             placeholder="-1"
             min="-1"
-            @change="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
+            @input="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
           />
           <span class="option-hint">{{ t('components.channels.common.historyThinking.roundsHint') }}</span>
         </div>

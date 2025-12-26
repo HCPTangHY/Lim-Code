@@ -164,7 +164,7 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
                         type="text"
                         :value="tokenCountApiConfig?.url || ''"
                         :placeholder="urlPlaceholder"
-                        @change="(e: any) => updateApiConfig('url', e.target.value)"
+                        @input="(e: any) => updateApiConfig('url', e.target.value)"
                     />
                     <span class="option-hint">
                         {{ t('components.channels.tokenCountMethod.apiConfig.urlHint') }}
@@ -181,7 +181,7 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
                             :type="showApiKey ? 'text' : 'password'"
                             :value="tokenCountApiConfig?.apiKey || ''"
                             :placeholder="t('components.channels.tokenCountMethod.apiConfig.apiKeyPlaceholder')"
-                            @change="(e: any) => updateApiConfig('apiKey', e.target.value)"
+                            @input="(e: any) => updateApiConfig('apiKey', e.target.value)"
                         />
                         <button
                             class="input-action-btn"
@@ -205,7 +205,7 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
                         type="text"
                         :value="tokenCountApiConfig?.model || ''"
                         :placeholder="modelPlaceholder"
-                        @change="(e: any) => updateApiConfig('model', e.target.value)"
+                        @input="(e: any) => updateApiConfig('model', e.target.value)"
                     />
                     <span class="option-hint">
                         {{ t('components.channels.tokenCountMethod.apiConfig.modelHint') }}

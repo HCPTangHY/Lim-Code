@@ -102,7 +102,7 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
               :value="header.key"
               :placeholder="t('components.channels.customHeaders.keyPlaceholder')"
               :disabled="!enabled"
-              @change="(e: any) => updateHeader(index, 'key', e.target.value)"
+              @input="(e: any) => updateHeader(index, 'key', e.target.value)"
             />
             <span v-if="isKeyDuplicate(index)" class="key-error">{{ t('components.channels.customHeaders.keyDuplicate') }}</span>
           </div>
@@ -112,7 +112,7 @@ function updateHeader(index: number, field: 'key' | 'value' | 'enabled', value: 
             :value="header.value"
             :placeholder="t('components.channels.customHeaders.valuePlaceholder')"
             :disabled="!enabled"
-            @change="(e: any) => updateHeader(index, 'value', e.target.value)"
+            @input="(e: any) => updateHeader(index, 'value', e.target.value)"
           />
         </div>
         

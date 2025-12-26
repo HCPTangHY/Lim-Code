@@ -235,7 +235,7 @@ onMounted(async () => {
             :value="summarizeConfig.keepRecentRounds"
             min="0"
             max="10"
-            @change="(e: any) => updateConfigField('keepRecentRounds', Number(e.target.value))"
+            @input="(e: any) => updateConfigField('keepRecentRounds', Number(e.target.value))"
           />
           <span class="unit">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsUnit') }}</span>
         </div>
@@ -248,7 +248,7 @@ onMounted(async () => {
           :value="summarizeConfig.summarizePrompt"
           rows="3"
           :placeholder="t('components.settings.summarizeSettings.optionsSection.promptPlaceholder')"
-          @change="(e: any) => updateConfigField('summarizePrompt', e.target.value)"
+          @input="(e: any) => updateConfigField('summarizePrompt', e.target.value)"
         ></textarea>
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.promptHint') }}</p>
       </div>

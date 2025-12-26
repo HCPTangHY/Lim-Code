@@ -124,7 +124,7 @@ function handleThinkingNumberChange(field: string, event: any) {
         placeholder="1.0"
         :disabled="!isOptionEnabled('temperature')"
         :class="{ disabled: !isOptionEnabled('temperature') }"
-        @change="(e: any) => handleNumberChange('temperature', e)"
+        @input="(e: any) => handleNumberChange('temperature', e)"
       />
       <span class="option-hint">{{ t('components.channels.common.temperature.hint') }}</span>
     </div>
@@ -148,7 +148,7 @@ function handleThinkingNumberChange(field: string, event: any) {
         :placeholder="t('components.channels.common.maxTokens.placeholder')"
         :disabled="!isOptionEnabled('max_tokens')"
         :class="{ disabled: !isOptionEnabled('max_tokens') }"
-        @change="(e: any) => handleNumberChange('max_tokens', e)"
+        @input="(e: any) => handleNumberChange('max_tokens', e)"
       />
     </div>
     
@@ -174,7 +174,7 @@ function handleThinkingNumberChange(field: string, event: any) {
         placeholder="0.9"
         :disabled="!isOptionEnabled('top_p')"
         :class="{ disabled: !isOptionEnabled('top_p') }"
-        @change="(e: any) => handleNumberChange('top_p', e)"
+        @input="(e: any) => handleNumberChange('top_p', e)"
       />
       <span class="option-hint">{{ t('components.channels.common.topP.hint') }}</span>
     </div>
@@ -198,7 +198,7 @@ function handleThinkingNumberChange(field: string, event: any) {
         placeholder="40"
         :disabled="!isOptionEnabled('top_k')"
         :class="{ disabled: !isOptionEnabled('top_k') }"
-        @change="(e: any) => handleNumberChange('top_k', e)"
+        @input="(e: any) => handleNumberChange('top_k', e)"
       />
     </div>
     
@@ -228,7 +228,7 @@ function handleThinkingNumberChange(field: string, event: any) {
             :value="getThinkingValue('budget_tokens')"
             :disabled="!isOptionEnabled('thinking')"
             :placeholder="t('components.channels.anthropic.thinking.budgetPlaceholder')"
-            @change="(e: any) => handleThinkingNumberChange('budget_tokens', e)"
+            @input="(e: any) => handleThinkingNumberChange('budget_tokens', e)"
           />
           <span class="option-hint">
             {{ t('components.channels.anthropic.thinking.budgetHint') }}
@@ -322,7 +322,7 @@ function handleThinkingNumberChange(field: string, event: any) {
             :value="config.historyThinkingRounds ?? -1"
             placeholder="-1"
             min="-1"
-            @change="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
+            @input="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
           />
           <span class="option-hint">{{ t('components.channels.common.historyThinking.roundsHint') }}</span>
         </div>

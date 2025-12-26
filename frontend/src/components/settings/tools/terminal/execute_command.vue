@@ -255,7 +255,7 @@ onMounted(() => {
                   :class="{ 'path-error': shell.available === false }"
                   :value="shell.path || ''"
                   :placeholder="t('components.settings.toolSettings.terminal.executeCommand.executablePathPlaceholder')"
-                  @change="(e) => updateShellPath(shell.type, (e.target as HTMLInputElement).value)"
+                  @input="(e) => updateShellPath(shell.type, (e.target as HTMLInputElement).value)"
                 />
               </label>
               <!-- 显示不可用原因 -->

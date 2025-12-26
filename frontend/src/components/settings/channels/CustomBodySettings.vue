@@ -175,7 +175,7 @@ function saveJson() {
             :value="item.key"
             :placeholder="t('components.channels.customBody.keyPlaceholder')"
             :disabled="!enabled"
-            @change="(e: any) => updateItem(index, 'key', e.target.value)"
+            @input="(e: any) => updateItem(index, 'key', e.target.value)"
           />
           <textarea
             class="body-value"
@@ -183,7 +183,7 @@ function saveJson() {
             :placeholder="t('components.channels.customBody.valuePlaceholder')"
             :disabled="!enabled"
             rows="3"
-            @change="(e: any) => updateItem(index, 'value', e.target.value)"
+            @input="(e: any) => updateItem(index, 'value', e.target.value)"
           ></textarea>
         </div>
         
