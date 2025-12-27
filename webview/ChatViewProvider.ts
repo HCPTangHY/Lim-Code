@@ -513,7 +513,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     void this.handleToolConfirmationStream(data, requestId);
                     break;
                 }
-                
+
+                case 'continueWithAnnotation': {
+                    // 工具确认后继续对话（带批注）
+                    void this.handleContinueWithAnnotationStream(data, requestId);
+                    break;
+                }
+
                 // ========== 配置管理 ==========
                 
                 case 'config.listConfigs': {
@@ -2499,7 +2505,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             content: chunk.content,
                             toolIteration: true,
                             toolResults: (chunk as any).toolResults,
-                            checkpoints: (chunk as any).checkpoints
+                            checkpoints: (chunk as any).checkpoints,
+                            needAnnotation: (chunk as any).needAnnotation
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2567,12 +2574,141 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * 处理继续对话（带批注）流式请求
+     */
+    private async handleContinueWithAnnotationStream(data: any, requestId: string) {
+        let hasError = false;
+        const conversationId = data.conversationId;
+
+        console.log(`[ChatViewProvider.handleContinueWithAnnotationStream] Starting stream for conversation: ${conversationId}`);
+
+        // 创建取消控制器
+        const abortController = new AbortController();
+        this.streamAbortControllers.set(conversationId, abortController);
+
+        try {
+            const stream = this.chatHandler.continueWithAnnotation({
+                ...data,
+                abortSignal: abortController.signal
+            });
+
+            for await (const chunk of stream) {
+                if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'checkpoints',
+                            checkpoints: (chunk as any).checkpoints
+                        }
+                    });
+                } else if ('toolsExecuting' in chunk && chunk.toolsExecuting) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'toolsExecuting',
+                            content: (chunk as any).content,
+                            pendingToolCalls: (chunk as any).pendingToolCalls,
+                            toolsExecuting: true
+                        }
+                    });
+                } else if ('awaitingConfirmation' in chunk && chunk.awaitingConfirmation) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'awaitingConfirmation',
+                            content: (chunk as any).content,
+                            pendingToolCalls: (chunk as any).pendingToolCalls
+                        }
+                    });
+                } else if ('chunk' in chunk && chunk.chunk) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'chunk',
+                            chunk: chunk.chunk
+                        }
+                    });
+                } else if ('toolIteration' in chunk && chunk.toolIteration) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'toolIteration',
+                            content: chunk.content,
+                            toolIteration: true,
+                            toolResults: (chunk as any).toolResults,
+                            checkpoints: (chunk as any).checkpoints
+                        }
+                    });
+                } else if ('content' in chunk && chunk.content) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'complete',
+                            content: chunk.content,
+                            checkpoints: (chunk as any).checkpoints
+                        }
+                    });
+                } else if ('cancelled' in chunk && (chunk as any).cancelled) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'cancelled',
+                            content: (chunk as any).content
+                        }
+                    });
+                } else if ('error' in chunk && chunk.error) {
+                    hasError = true;
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'error',
+                            error: chunk.error
+                        }
+                    });
+                    this.sendError(requestId, chunk.error.code || 'CONTINUE_ANNOTATION_ERROR', chunk.error.message);
+                }
+            }
+
+            if (!hasError) {
+                this.sendResponse(requestId, { success: true });
+            }
+        } catch (error: any) {
+            if (abortController.signal.aborted) {
+                return;
+            }
+
+            this._view?.webview.postMessage({
+                type: 'streamChunk',
+                data: {
+                    conversationId,
+                    type: 'error',
+                    error: {
+                        code: error.code || 'CONTINUE_ANNOTATION_ERROR',
+                        message: error.message
+                    }
+                }
+            });
+            this.sendError(requestId, error.code || 'CONTINUE_ANNOTATION_ERROR', error.message);
+        } finally {
+            this.streamAbortControllers.delete(conversationId);
+        }
+    }
+
+    /**
      * 处理编辑并重试流式请求
      */
     private async handleEditAndRetryStream(data: any, requestId: string) {
         let hasError = false;
         const conversationId = data.conversationId;
-        
+
         // 创建取消控制器
         const abortController = new AbortController();
         this.streamAbortControllers.set(conversationId, abortController);
