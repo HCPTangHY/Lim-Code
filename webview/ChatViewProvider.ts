@@ -35,6 +35,7 @@ import {
     setGlobalDiffStorageManager
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
+import { getDiffManager } from '../backend/tools/file/diffManager';
 
 /**
  * Diff 预览内容提供者
@@ -1081,7 +1082,48 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     }
                     break;
                 }
-                
+
+                case 'diff.accept': {
+                    try {
+                        const { diffId } = data;
+                        const diffManager = getDiffManager();
+                        // 手动保存模式，isAutoSave = false，会保留用户编辑
+                        const success = await diffManager.acceptDiff(diffId, true, false);
+                        this.sendResponse(requestId, { success });
+                    } catch (error: any) {
+                        this.sendError(requestId, 'ACCEPT_DIFF_ERROR', error.message || t('webview.errors.acceptDiffFailed'));
+                    }
+                    break;
+                }
+
+                case 'diff.reject': {
+                    try {
+                        const { diffId } = data;
+                        const diffManager = getDiffManager();
+                        const success = await diffManager.rejectDiff(diffId);
+                        this.sendResponse(requestId, { success });
+                    } catch (error: any) {
+                        this.sendError(requestId, 'REJECT_DIFF_ERROR', error.message || t('webview.errors.rejectDiffFailed'));
+                    }
+                    break;
+                }
+
+                case 'diff.getPending': {
+                    try {
+                        const diffManager = getDiffManager();
+                        const pendingDiffs = diffManager.getPendingDiffs();
+                        this.sendResponse(requestId, {
+                            diffs: pendingDiffs.map(d => ({
+                                id: d.id,
+                                filePath: d.filePath
+                            }))
+                        });
+                    } catch (error: any) {
+                        this.sendResponse(requestId, { diffs: [] });
+                    }
+                    break;
+                }
+
                 // ========== 工作区信息 ==========
                 
                 case 'getWorkspaceUri': {
