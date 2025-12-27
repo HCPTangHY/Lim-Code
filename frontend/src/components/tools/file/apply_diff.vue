@@ -80,6 +80,11 @@ const resultData = computed(() => {
   return result?.data || null
 })
 
+// 获取用户编辑的内容
+const userEditedContent = computed(() => {
+  return resultData.value?.userEditedContent as string | undefined
+})
+
 // 是否为全失败
 const isFailed = computed(() => {
   return !!props.error || (resultData.value && resultData.value.appliedCount === 0)
@@ -371,6 +376,19 @@ onBeforeUnmount(() => {
       <span v-if="resultData.status === 'pending'" class="status-badge pending">{{ t('components.tools.file.applyDiffPanel.pending') }}</span>
       <span v-else-if="resultData.status === 'accepted'" class="status-badge accepted">{{ t('components.tools.file.applyDiffPanel.accepted') }}</span>
     </div>
+
+    <!-- 用户编辑提示 -->
+    <div v-if="userEditedContent" class="user-edit-section">
+      <div class="user-edit-header">
+        <span class="codicon codicon-edit user-edit-icon"></span>
+        <span class="user-edit-title">{{ t('components.tools.file.applyDiffPanel.userEdited') }}</span>
+      </div>
+      <div class="user-edit-content">
+        <CustomScrollbar :horizontal="true" :max-height="200">
+          <pre class="user-edit-code">{{ userEditedContent }}</pre>
+        </CustomScrollbar>
+      </div>
+    </div>
     
     <!-- 全局错误 -->
     <div v-if="error && !resultData" class="panel-error">
@@ -613,6 +631,51 @@ onBeforeUnmount(() => {
 .status-badge.accepted {
   background: var(--vscode-testing-iconPassed);
   color: var(--vscode-editor-background);
+}
+
+/* 用户编辑区块 */
+.user-edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 4px);
+  padding: var(--spacing-sm, 8px);
+  background: rgba(0, 122, 204, 0.08);
+  border: 1px solid var(--vscode-charts-blue, #007acc);
+  border-radius: var(--radius-sm, 2px);
+}
+
+.user-edit-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.user-edit-icon {
+  color: var(--vscode-charts-blue, #007acc);
+  font-size: 12px;
+}
+
+.user-edit-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-charts-blue, #007acc);
+}
+
+.user-edit-content {
+  background: var(--vscode-editor-background);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+}
+
+.user-edit-code {
+  margin: 0;
+  padding: var(--spacing-sm, 8px);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  white-space: pre;
+  overflow-x: auto;
 }
 
 /* 全局错误 */

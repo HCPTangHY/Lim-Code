@@ -1638,6 +1638,8 @@ export interface LanguageMessages {
                     copyNew: string;
                     deletedLines: string;
                     addedLines: string;
+                    userEdited: string;
+                    userEditedContent: string;
                 };
                 /** create_directory 内容面板 */
                 createDirectoryPanel: {
