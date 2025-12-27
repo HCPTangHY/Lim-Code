@@ -261,6 +261,9 @@ export interface LanguageMessages {
                 fileCount: string;
                 yesterday: string;
                 daysAgo: string;
+                restoreConfirmTitle: string;
+                restoreConfirmMessage: string;
+                restoreConfirmBtn: string;
             };
             continue: {
                 title: string;

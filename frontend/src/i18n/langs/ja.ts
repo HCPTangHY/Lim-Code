@@ -287,7 +287,10 @@ const ja: LanguageMessages = {
                 restoreTooltip: 'ワークスペースをこのチェックポイントに復元',
                 fileCount: '{count} 個のファイル',
                 yesterday: '昨日',
-                daysAgo: '{days} 日前'
+                daysAgo: '{days} 日前',
+                restoreConfirmTitle: 'チェックポイントを復元',
+                restoreConfirmMessage: 'ワークスペースをこのチェックポイントに復元してもよろしいですか？これにより、現在のワークスペース内の対応するファイルが上書きされ、この操作は元に戻せません。',
+                restoreConfirmBtn: '復元'
             },
             continue: {
                 title: '会話が一時停止中',
@@ -1158,7 +1161,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.24',
+                    version: 'バージョン：1.0.25',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

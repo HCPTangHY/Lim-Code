@@ -287,7 +287,10 @@ const en: LanguageMessages = {
                 restoreTooltip: 'Restore workspace to this checkpoint',
                 fileCount: '{count} files',
                 yesterday: 'Yesterday',
-                daysAgo: '{days} days ago'
+                daysAgo: '{days} days ago',
+                restoreConfirmTitle: 'Restore Checkpoint',
+                restoreConfirmMessage: 'Are you sure you want to restore the workspace to this checkpoint? This will overwrite the corresponding files in your current workspace, and this action cannot be undone.',
+                restoreConfirmBtn: 'Restore'
             },
             continue: {
                 title: 'Conversation Paused',
@@ -1158,7 +1161,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.24',
+                    version: 'Version: 1.0.25',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

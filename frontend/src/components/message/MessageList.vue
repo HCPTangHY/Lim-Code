@@ -5,7 +5,7 @@
  */
 
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import { CustomScrollbar, DeleteDialog, Tooltip } from '../common'
+import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
 import MessageItem from './MessageItem.vue'
 import SummaryMessage from './SummaryMessage.vue'
 import { useChatStore } from '../../stores'
@@ -214,6 +214,10 @@ const emit = defineEmits<{
 const showDeleteConfirm = ref(false)
 const pendingDeleteMessageId = ref<string | null>(null)
 
+// 恢复检查点确认对话框状态
+const showRestoreConfirm = ref(false)
+const pendingCheckpoint = ref<CheckpointRecord | null>(null)
+
 
 // 计算要删除的消息数量（使用 allMessages）
 const deleteCount = computed(() => {
@@ -302,7 +306,10 @@ function handleContinue() {
 
 // 处理恢复检查点
 function handleRestoreCheckpoint(checkpointId: string) {
-  emit('restoreCheckpoint', checkpointId)
+  const checkpoint = chatStore.checkpoints.find(cp => cp.id === checkpointId)
+  if (checkpoint) {
+    restoreCheckpoint(checkpoint)
+  }
 }
 
 // 处理回档并重试
@@ -346,9 +353,18 @@ function shouldMergeForTool(messageIndex: number, toolName: string): boolean {
   return Boolean(beforeCp.contentHash && afterCp.contentHash && beforeCp.contentHash === afterCp.contentHash)
 }
 
-// 恢复检查点（后端会使用 VSCode 弹窗显示结果）
+// 恢复检查点 - 显示确认对话框
 async function restoreCheckpoint(checkpoint: CheckpointRecord) {
-  await chatStore.restoreCheckpoint(checkpoint.id)
+  pendingCheckpoint.value = checkpoint
+  showRestoreConfirm.value = true
+}
+
+// 确认恢复检查点
+async function confirmRestore() {
+  if (pendingCheckpoint.value) {
+    await chatStore.restoreCheckpoint(pendingCheckpoint.value.id)
+    pendingCheckpoint.value = null
+  }
 }
 
 // 获取检查点标签
@@ -545,6 +561,16 @@ function formatCheckpointTime(timestamp: number): string {
       @delete="confirmDelete"
       @restore-and-delete="handleRestoreAndDelete"
       @cancel="cancelDelete"
+    />
+    
+    <!-- 恢复检查点确认对话框 -->
+    <ConfirmDialog
+      v-model="showRestoreConfirm"
+      :title="t('components.message.checkpoint.restoreConfirmTitle')"
+      :message="t('components.message.checkpoint.restoreConfirmMessage')"
+      :confirm-text="t('components.message.checkpoint.restoreConfirmBtn')"
+      is-danger
+      @confirm="confirmRestore"
     />
     
   </div>

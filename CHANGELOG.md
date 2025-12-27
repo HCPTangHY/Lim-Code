@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.25] - 2025-12-26
+
+### Added
+  - 添加回退存档点二次确认功能
+
 ## [1.0.24] - 2025-12-26
 
 ### Added
