@@ -16,6 +16,8 @@ const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
   error?: string
+  /** 工具执行状态 */
+  status?: 'pending' | 'running' | 'completed'
 }>()
 
 const { t } = useI18n()
@@ -94,6 +96,11 @@ const isFailed = computed(() => {
 const isPartial = computed(() => {
   const data = resultData.value
   return !props.error && data && data.appliedCount > 0 && data.failedCount > 0
+})
+
+// 是否处于 pending 状态（需要用户操作）
+const isPending = computed(() => {
+  return resultData.value?.status === 'pending' && resultData.value?.pendingDiffId
 })
 
 // 获取文件名
@@ -331,6 +338,7 @@ function getDiffStats(diffLines: DiffLine[]) {
 
 // 清理定时器
 onBeforeUnmount(() => {
+  // 清理复制状态定时器
   for (const timeout of copyTimeouts.values()) {
     clearTimeout(timeout)
   }
@@ -590,6 +598,11 @@ onBeforeUnmount(() => {
   border-color: var(--vscode-charts-orange);
 }
 
+.result-status.is-running {
+  background: rgba(0, 122, 204, 0.1);
+  border-color: var(--vscode-charts-blue);
+}
+
 .status-icon {
   font-size: 12px;
   position: relative;
@@ -608,6 +621,10 @@ onBeforeUnmount(() => {
 
 .status-icon.partial {
   color: var(--vscode-charts-yellow);
+}
+
+.status-icon.running {
+  color: var(--vscode-charts-blue);
 }
 
 .status-text {
@@ -631,6 +648,63 @@ onBeforeUnmount(() => {
 .status-badge.accepted {
   background: var(--vscode-testing-iconPassed);
   color: var(--vscode-editor-background);
+}
+
+/* 操作按钮组 */
+.diff-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  margin-left: auto;
+}
+
+.diff-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: none;
+  border-radius: var(--radius-sm, 2px);
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.1s);
+}
+
+.diff-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.diff-action-btn.accept {
+  background: var(--vscode-testing-iconPassed);
+  color: var(--vscode-editor-background);
+}
+
+.diff-action-btn.accept:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.diff-action-btn.reject {
+  background: var(--vscode-testing-iconFailed);
+  color: var(--vscode-editor-background);
+}
+
+.diff-action-btn.reject:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.diff-action-btn .codicon {
+  font-size: 12px;
+}
+
+/* codicon loading spin 动画 */
+@keyframes codicon-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.codicon-modifier-spin {
+  animation: codicon-spin 1s linear infinite;
 }
 
 /* 用户编辑区块 */

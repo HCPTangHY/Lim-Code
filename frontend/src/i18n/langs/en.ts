@@ -1583,7 +1583,12 @@ const en: LanguageMessages = {
                     deletedLines: 'Deleted',
                     addedLines: 'Added',
                     userEdited: 'User Edited',
-                    userEditedContent: 'User modified content'
+                    userEditedContent: 'User modified content',
+                    save: 'Save',
+                    reject: 'Reject',
+                    saveChanges: 'Save changes (Ctrl+S)',
+                    rejectChanges: 'Discard changes',
+                    waitingForAction: 'Waiting for user action'
                 },
                 createDirectoryPanel: {
                     title: 'Create Directory',

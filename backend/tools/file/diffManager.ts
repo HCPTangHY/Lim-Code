@@ -429,7 +429,7 @@ export class DiffManager {
     }
     
     /**
-     * 拒绝 diff（放弃修改）
+     * 拒绝 diff（放弃修改，还原文件并关闭标签页）
      */
     public async rejectDiff(id: string): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
@@ -437,13 +437,65 @@ export class DiffManager {
             return false;
         }
         
-        diff.status = 'rejected';
-        this.cleanup(id);
-        this.notifyStatusChange();
-        
-        vscode.window.showInformationMessage(t('tools.file.diffManager.rejected', { filePath: diff.filePath }));
-        
-        return true;
+        try {
+            // 移除监听器（避免重复处理）
+            const saveListener = this.saveListeners.get(id);
+            if (saveListener) {
+                saveListener.dispose();
+                this.saveListeners.delete(id);
+            }
+            const closeListener = this.closeListeners.get(id);
+            if (closeListener) {
+                closeListener.dispose();
+                this.closeListeners.delete(id);
+            }
+
+            // 尝试还原文件到原始状态
+            const uri = vscode.Uri.file(diff.absolutePath);
+            let doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+            
+            if (doc) {
+                // 文档已打开，恢复到原始内容
+                const currentContent = doc.getText();
+                if (currentContent !== diff.originalContent) {
+                    const edit = new vscode.WorkspaceEdit();
+                    const fullRange = new vscode.Range(
+                        doc.positionAt(0),
+                        doc.positionAt(currentContent.length)
+                    );
+                    edit.replace(uri, fullRange, diff.originalContent);
+                    await vscode.workspace.applyEdit(edit);
+                    
+                    // 保存还原后的文件
+                    await doc.save();
+                }
+            } else {
+                // 文档未打开，直接写入原始内容到磁盘
+                const currentContent = fs.readFileSync(diff.absolutePath, 'utf8');
+                if (currentContent !== diff.originalContent) {
+                    fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
+                }
+            }
+            
+            // 关闭 diff 标签页
+            await this.closeDiffTab(diff.absolutePath);
+            
+            diff.status = 'rejected';
+            this.cleanup(id);
+            this.notifyStatusChange();
+            
+            vscode.window.showInformationMessage(t('tools.file.diffManager.rejected', { filePath: diff.filePath }));
+            
+            return true;
+        } catch (error) {
+            // 即使还原失败，也标记为已拒绝
+            diff.status = 'rejected';
+            this.cleanup(id);
+            this.notifyStatusChange();
+            
+            vscode.window.showErrorMessage(t('tools.file.diffManager.rejectFailed', { error: error instanceof Error ? error.message : String(error) }));
+            return false;
+        }
     }
     
     /**

@@ -1640,6 +1640,11 @@ export interface LanguageMessages {
                     addedLines: string;
                     userEdited: string;
                     userEditedContent: string;
+                    save: string;
+                    reject: string;
+                    saveChanges: string;
+                    rejectChanges: string;
+                    waitingForAction: string;
                 };
                 /** create_directory 内容面板 */
                 createDirectoryPanel: {
