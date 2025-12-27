@@ -158,29 +158,11 @@ async function submitAllDecisions() {
 
   if (toolResponses.length === 0) return
 
-  // 获取输入栏的批注内容
-  const annotation = chatStore.inputValue.trim()
-
   // 清空用户决定状态
   userDecisions.value.clear()
 
-  // 清空输入栏
-  if (annotation) {
-    chatStore.clearInputValue()
-
-    // 先在聊天流中添加用户的批注消息（确保显示顺序正确）
-    const userMessage: Message = {
-      id: generateId(),
-      role: 'user',
-      content: annotation,
-      timestamp: Date.now(),
-      parts: [{ text: annotation }]
-    }
-    chatStore.allMessages.push(userMessage)
-  }
-
-  // 发送到后端（带批注）
-  await sendToolConfirmation(toolResponses, annotation)
+  // 发送到后端（不带批注，批注在工具执行完成后由 chatStore 发送）
+  await sendToolConfirmation(toolResponses)
 }
 
 // 发送工具确认响应到后端
