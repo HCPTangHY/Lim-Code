@@ -186,14 +186,9 @@ async function handleAcceptDiff(tool: ToolUsage) {
       isFirstDiff = false
     }
 
-    // 如果有批注，清空输入框并发送批注给 AI
+    // 清空输入框（如果有内容）
     if (annotation) {
       chatStore.setInputValue('')
-
-      // 如果后端返回了完整批注，使用 chatStore 发送给 AI
-      if (fullAnnotation) {
-        await chatStore.sendDiffAnnotation(fullAnnotation)
-      }
     }
 
     // 保存成功后清除对应的 pending 状态
@@ -201,6 +196,10 @@ async function handleAcceptDiff(tool: ToolUsage) {
     for (const path of paths) {
       pendingDiffMap.value.delete(path)
     }
+
+    // 发送批注并继续 AI 对话
+    // 无论是否有批注，都需要继续对话（因为 needAnnotation 不再自动处理 diff 场景）
+    await chatStore.continueDiffWithAnnotation(fullAnnotation)
   } finally {
     diffAcceptingIds.value.delete(tool.id)
   }
@@ -230,14 +229,9 @@ async function handleRejectDiff(tool: ToolUsage) {
       isFirstDiff = false
     }
 
-    // 如果有批注，清空输入框并发送批注给 AI
+    // 清空输入框（如果有内容）
     if (annotation) {
       chatStore.setInputValue('')
-
-      // 如果后端返回了完整批注，使用 chatStore 发送给 AI
-      if (fullAnnotation) {
-        await chatStore.sendDiffAnnotation(fullAnnotation)
-      }
     }
 
     // 拒绝成功后清除对应的 pending 状态
@@ -245,6 +239,10 @@ async function handleRejectDiff(tool: ToolUsage) {
     for (const path of paths) {
       pendingDiffMap.value.delete(path)
     }
+
+    // 发送批注并继续 AI 对话
+    // 无论是否有批注，都需要继续对话（因为 needAnnotation 不再自动处理 diff 场景）
+    await chatStore.continueDiffWithAnnotation(fullAnnotation)
   } finally {
     diffRejectingIds.value.delete(tool.id)
   }

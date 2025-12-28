@@ -1369,7 +1369,24 @@ export const useChatStore = defineStore('chat', () => {
 
       // 如果需要等待用户批注（工具确认流程）
       if (chunk.needAnnotation) {
-        // 获取输入框内容作为批注
+        // 检查是否有 apply_diff 或 write_file 工具成功执行
+        // 这些工具需要用户手动通过保存/拒绝按钮来触发继续对话
+        const lastAssistantMsg = allMessages.value.findLast(m => m.role === 'assistant')
+        const hasDiffTools = lastAssistantMsg?.tools?.some(
+          t => (t.name === 'apply_diff' || t.name === 'write_file') && t.status === 'success'
+        )
+
+        if (hasDiffTools) {
+          // 有 diff 工具成功执行，不自动继续对话
+          // 等待用户通过保存/拒绝按钮触发 sendDiffAnnotation
+          // 只需结束流式状态，允许用户操作
+          streamingMessageId.value = null
+          isStreaming.value = false
+          isWaitingForResponse.value = false
+          return
+        }
+
+        // 无 diff 工具，正常处理批注
         const annotation = inputValue.value.trim()
 
         // 如果有批注，清空输入框
@@ -2659,15 +2676,16 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
-   * 发送 diff 批注给 AI
+   * Diff 操作后继续 AI 对话
    *
-   * 当用户在聊天面板中点击保存/拒绝按钮并有输入框内容时，
-   * 将格式化后的批注作为用户消息发送给 AI 继续对话。
+   * 当用户点击保存/拒绝按钮后调用此方法继续对话。
+   * 这是 apply_diff/write_file 场景下继续对话的唯一入口，
+   * needAnnotation 不会自动处理这些场景。
    *
-   * @param fullAnnotation 完整的批注内容（已包含操作类型前缀，如 "[用户已保存修改] xxx"）
+   * @param annotation 可选的批注内容（已格式化，如 "[用户已保存修改] xxx"）
    */
-  async function sendDiffAnnotation(fullAnnotation: string): Promise<void> {
-    if (!fullAnnotation.trim() || !currentConversationId.value || !configId.value) {
+  async function continueDiffWithAnnotation(annotation: string = ''): Promise<void> {
+    if (!currentConversationId.value || !configId.value) {
       return
     }
 
@@ -2683,11 +2701,13 @@ export const useChatStore = defineStore('chat', () => {
     const conv = conversations.value.find(c => c.id === currentConversationId.value)
     if (conv) {
       conv.updatedAt = Date.now()
-      conv.messageCount = allMessages.value.length + 2 // 预计添加用户消息 + AI 占位消息
+      // 如果有批注，会添加用户消息 + AI 占位消息；否则只添加 AI 占位消息
+      conv.messageCount = allMessages.value.length + (annotation.trim() ? 2 : 1)
     }
 
-    // 复用批注发送逻辑
-    _createAnnotationMessagesAndSend(fullAnnotation, true)
+    // 发送批注并继续对话
+    // 如果有批注内容，添加用户消息；否则只创建 AI 占位消息继续对话
+    _createAnnotationMessagesAndSend(annotation.trim(), !!annotation.trim())
 
     isLoading.value = false
   }
@@ -2942,8 +2962,8 @@ export const useChatStore = defineStore('chat', () => {
     // 上下文总结
     summarizeContext,
 
-    // Diff 批注发送
-    sendDiffAnnotation,
+    // Diff 操作后继续对话
+    continueDiffWithAnnotation,
 
     // 初始化
     initialize
