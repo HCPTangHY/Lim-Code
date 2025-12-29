@@ -1588,7 +1588,10 @@ const ja: LanguageMessages = {
                     reject: '拒否',
                     saveChanges: '変更を保存 (Ctrl+S)',
                     rejectChanges: '変更を破棄',
-                    waitingForAction: 'ユーザー操作を待っています'
+                    waitingForAction: 'ユーザー操作を待っています',
+                    saved: '保存済み',
+                    rejected: '拒否済み',
+                    waitingOthers: '他のファイルを待っています...'
                 },
                 createDirectoryPanel: {
                     title: 'ディレクトリを作成',

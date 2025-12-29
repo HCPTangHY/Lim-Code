@@ -459,6 +459,10 @@ export interface StreamChunk {
   pendingToolCalls?: PendingToolCall[]
   /** 标记工具即将开始执行（用于在工具执行前先发送计时信息） */
   toolsExecuting?: boolean
+  /** 是否需要用户批注（文件修改工具执行后暂停等待用户确认） */
+  needAnnotation?: boolean
+  /** 需要用户确认的文件修改工具 ID 列表（后端直接告知，前端无需推断） */
+  pendingDiffToolIds?: string[]
 }
 
 // ============ 错误类型 ============

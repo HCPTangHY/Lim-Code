@@ -266,9 +266,14 @@ export class DiffManager {
         const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
             if (savedDoc.uri.fsPath === diff.absolutePath) {
                 // 检查用户是否修改了内容
+                // 使用标准化比较，忽略换行符差异（CRLF vs LF）
                 const savedContent = savedDoc.getText();
-                if (savedContent !== diff.newContent && savedContent !== diff.originalContent) {
-                    // 用户修改了内容，记录下来
+                const normalizedSaved = savedContent.replace(/\r\n/g, '\n');
+                const normalizedNew = diff.newContent.replace(/\r\n/g, '\n');
+                const normalizedOriginal = diff.originalContent.replace(/\r\n/g, '\n');
+
+                if (normalizedSaved !== normalizedNew && normalizedSaved !== normalizedOriginal) {
+                    // 用户确实修改了内容，记录下来
                     diff.userEditedContent = savedContent;
                 }
 
@@ -377,8 +382,13 @@ export class DiffManager {
                 }
             } else {
                 // 手动保存模式：保留用户的修改，记录用户编辑的内容
-                if (currentContent !== diff.newContent && currentContent !== diff.originalContent) {
-                    // 用户修改了内容，记录下来
+                // 使用标准化比较，忽略换行符差异（CRLF vs LF）
+                const normalizedCurrent = currentContent.replace(/\r\n/g, '\n');
+                const normalizedNew = diff.newContent.replace(/\r\n/g, '\n');
+                const normalizedOriginal = diff.originalContent.replace(/\r\n/g, '\n');
+
+                if (normalizedCurrent !== normalizedNew && normalizedCurrent !== normalizedOriginal) {
+                    // 用户确实修改了内容，记录下来
                     diff.userEditedContent = currentContent;
                 }
                 // 不覆盖，直接使用当前编辑器中的内容

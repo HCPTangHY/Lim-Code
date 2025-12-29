@@ -1588,7 +1588,10 @@ const zhCN: LanguageMessages = {
                     reject: '拒绝',
                     saveChanges: '保存更改 (Ctrl+S)',
                     rejectChanges: '放弃更改',
-                    waitingForAction: '等待用户操作'
+                    waitingForAction: '等待用户操作',
+                    saved: '已保存',
+                    rejected: '已拒绝',
+                    waitingOthers: '等待其他文件...'
                 },
                 createDirectoryPanel: {
                     title: '创建目录',

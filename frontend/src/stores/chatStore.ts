@@ -134,7 +134,13 @@ export const useChatStore = defineStore('chat', () => {
   
   /** 等待AI响应状态 - 用于显示等待动画 */
   const isWaitingForResponse = ref(false)
-  
+
+  /**
+   * 防止重复发送 continueWithAnnotation 请求的标志
+   * 在发送请求前设置为 true，收到响应（complete/error/cancelled）后重置为 false
+   */
+  let isSendingAnnotation = false
+
   /** 重试状态 */
   const retryStatus = ref<{
     isRetrying: boolean
@@ -168,6 +174,12 @@ export const useChatStore = defineStore('chat', () => {
   
   /** 工作区筛选模式（默认当前工作区） */
   const workspaceFilter = ref<WorkspaceFilter>('current')
+
+  /**
+   * 需要用户确认的文件修改工具 ID 列表
+   * 由后端在 needAnnotation 时直接提供，前端无需推断
+   */
+  const pendingDiffToolIds = ref<string[]>([])
 
   // ============ 辅助函数 ============
   
@@ -550,12 +562,13 @@ export const useChatStore = defineStore('chat', () => {
     if (isWaitingForResponse.value || isStreaming.value) {
       await cancelStreamAndRejectTools()
     }
-    
+
     currentConversationId.value = null
     allMessages.value = []  // 清空消息
     checkpoints.value = []  // 清空检查点
     error.value = null
-    
+    pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
+
     // 清除所有加载和流式状态
     isLoading.value = false
     isStreaming.value = false
@@ -676,6 +689,7 @@ export const useChatStore = defineStore('chat', () => {
     allMessages.value = []
     checkpoints.value = []
     error.value = null
+    pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
     isLoading.value = false
     isStreaming.value = false
     streamingMessageId.value = null
@@ -1269,8 +1283,38 @@ export const useChatStore = defineStore('chat', () => {
       // isWaitingForResponse 保持 true 或设为特殊状态
     } else if (chunk.type === 'toolIteration' && chunk.content) {
       // 工具迭代完成：当前消息包含工具调用
-      const messageIndex = allMessages.value.findIndex(m => m.id === streamingMessageId.value)
-      
+
+      // 检查是否是 diff 工具且用户已经点击了保存/拒绝按钮
+      // 如果是，仍然需要更新工具状态和添加 functionResponse，但跳过继续 AI 对话的逻辑
+      let skipContinueConversation = false
+      if (chunk.needAnnotation && isSendingAnnotation) {
+        const hasDiffToolsInResults = chunk.toolResults?.some((r: any) => {
+          const toolName = r.name
+          return toolName === 'apply_diff' || toolName === 'write_file'
+        })
+        if (hasDiffToolsInResults) {
+          skipContinueConversation = true
+        }
+      }
+
+      // 查找要更新的消息
+      // 注意：当 skipContinueConversation=true 时，streamingMessageId 可能已被
+      // _createAnnotationMessagesAndSend 更新为新的占位消息 ID
+      // 此时应该查找最后一条带工具的助手消息，而不是新的空占位消息
+      let messageIndex = -1
+      if (skipContinueConversation) {
+        // 从后往前查找最后一条带工具的助手消息
+        for (let i = allMessages.value.length - 1; i >= 0; i--) {
+          const msg = allMessages.value[i]
+          if (msg.role === 'assistant' && msg.tools && msg.tools.length > 0) {
+            messageIndex = i
+            break
+          }
+        }
+      } else {
+        messageIndex = allMessages.value.findIndex(m => m.id === streamingMessageId.value)
+      }
+
       // 检查是否有工具被取消或拒绝
       const cancelledToolIds = new Set<string>()
       const rejectedToolIds = new Set<string>()
@@ -1303,10 +1347,27 @@ export const useChatStore = defineStore('chat', () => {
           delete finalMessage.metadata.thinkingStartTime
         }
         
-        // 恢复 tools 信息
+        // 恢复 tools 信息，并用后端返回的 ID 更新前端生成的 ID
         let restoredTools = finalMessage.tools
-        if (existingTools && (!restoredTools || restoredTools.length === 0)) {
-          restoredTools = existingTools
+        if (existingTools && existingTools.length > 0) {
+          if (!restoredTools || restoredTools.length === 0) {
+            // 后端没有返回 tools，使用前端的
+            restoredTools = existingTools
+          } else {
+            // 后端返回了 tools，用后端的 ID 更新前端的
+            // 按顺序匹配工具（假设顺序一致）
+            restoredTools = existingTools.map((existingTool, index) => {
+              const backendTool = restoredTools![index]
+              if (backendTool && backendTool.id && backendTool.id.startsWith('fc_')) {
+                // 使用后端返回的 ID（fc_xxx 格式）替换前端生成的 ID
+                return {
+                  ...existingTool,
+                  id: backendTool.id
+                }
+              }
+              return existingTool
+            })
+          }
         }
         
         // 更新工具状态：被取消或拒绝的工具标记为 error，其他标记为 success
@@ -1324,7 +1385,14 @@ export const useChatStore = defineStore('chat', () => {
           streaming: false,
           tools: restoredTools
         }
-        
+
+        // 重要：在更新消息到数组之前，先设置 pendingDiffToolIds
+        // 这样当 ToolMessage 组件因为 allMessages 变化而重新渲染时，
+        // pendingDiffToolIds 已经包含正确的数据
+        if (chunk.needAnnotation && chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
+          pendingDiffToolIds.value = chunk.pendingDiffToolIds
+        }
+
         // 用新对象替换数组中的旧对象
         allMessages.value = [
           ...allMessages.value.slice(0, messageIndex),
@@ -1349,7 +1417,25 @@ export const useChatStore = defineStore('chat', () => {
             }
           }))
         }
-        allMessages.value.push(responseMessage)
+
+        // 当 skipContinueConversation=true 时，_createAnnotationMessagesAndSend 已经
+        // 添加了用户批注消息和助手占位消息。functionResponse 应该插入到它们之前
+        // 正确的消息顺序：助手(工具调用) → functionResponse → 用户批注 → 助手响应
+        if (skipContinueConversation) {
+          // 从后往前找第一个非 functionResponse 的用户消息（即用户批注）
+          let insertIndex = allMessages.value.length
+          for (let i = allMessages.value.length - 1; i >= 0; i--) {
+            const msg = allMessages.value[i]
+            if (msg.role === 'user' && !msg.isFunctionResponse) {
+              insertIndex = i
+              break
+            }
+          }
+          // 插入到用户批注消息之前
+          allMessages.value.splice(insertIndex, 0, responseMessage)
+        } else {
+          allMessages.value.push(responseMessage)
+        }
       }
       
       // 处理新创建的检查点
@@ -1367,19 +1453,30 @@ export const useChatStore = defineStore('chat', () => {
         return
       }
 
+      // 如果用户已经点击了保存/拒绝按钮（skipContinueConversation=true），
+      // 工具状态和 functionResponse 已更新完毕
+      // 重要：此时 _createAnnotationMessagesAndSend 已经：
+      // 1. 创建了新的占位消息
+      // 2. 将 streamingMessageId 设置为新占位消息的 ID
+      // 3. 设置了 isStreaming 和 isWaitingForResponse 为 true
+      // 4. 发送了 continueWithAnnotation 请求
+      // 所以这里不能清除这些状态，否则后续的 chunk 和 complete 无法更新占位消息
+      if (skipContinueConversation) {
+        // 不清除 streamingMessageId、isStreaming、isWaitingForResponse
+        // 让后续的 chunk 和 complete 正常更新 _createAnnotationMessagesAndSend 创建的占位消息
+        return
+      }
+
       // 如果需要等待用户批注（工具确认流程）
       if (chunk.needAnnotation) {
-        // 检查是否有 apply_diff 或 write_file 工具成功执行
-        // 这些工具需要用户手动通过保存/拒绝按钮来触发继续对话
-        const lastAssistantMsg = allMessages.value.findLast(m => m.role === 'assistant')
-        const hasDiffTools = lastAssistantMsg?.tools?.some(
-          t => (t.name === 'apply_diff' || t.name === 'write_file') && t.status === 'success'
-        )
-
-        if (hasDiffTools) {
-          // 有 diff 工具成功执行，不自动继续对话
-          // 等待用户通过保存/拒绝按钮触发 sendDiffAnnotation
-          // 只需结束流式状态，允许用户操作
+        // 后端直接告知需要确认的工具 ID 列表
+        if (chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
+          // pendingDiffToolIds 通常已在消息更新前设置
+          // 这里再次设置作为回退保护（如果 messageIndex === -1）
+          if (pendingDiffToolIds.value.length === 0) {
+            pendingDiffToolIds.value = chunk.pendingDiffToolIds
+          }
+          // 结束 streaming 状态，等待用户通过保存/拒绝按钮触发 continueDiffWithAnnotation
           streamingMessageId.value = null
           isStreaming.value = false
           isWaitingForResponse.value = false
@@ -1459,7 +1556,8 @@ export const useChatStore = defineStore('chat', () => {
       streamingMessageId.value = null
       isStreaming.value = false
       isWaitingForResponse.value = false  // 结束等待
-      
+      isSendingAnnotation = false  // 重置防重复标志
+
       // 流式完成后更新对话元数据
       updateConversationAfterMessage()
     } else if (chunk.type === 'checkpoints') {
@@ -1543,6 +1641,7 @@ export const useChatStore = defineStore('chat', () => {
       streamingMessageId.value = null
       isStreaming.value = false
       isWaitingForResponse.value = false
+      isSendingAnnotation = false  // 重置防重复标志
     } else if (chunk.type === 'error') {
       error.value = chunk.error || {
         code: 'STREAM_ERROR',
@@ -1562,9 +1661,10 @@ export const useChatStore = defineStore('chat', () => {
       
       isStreaming.value = false
       isWaitingForResponse.value = false  // 结束等待
+      isSendingAnnotation = false  // 重置防重复标志
     }
   }
-  
+
   /**
    * 流式完成后更新对话元数据
    */
@@ -2636,6 +2736,18 @@ export const useChatStore = defineStore('chat', () => {
    * @param addUserMessage 是否添加用户消息到聊天流（needAnnotation 场景需要，因为输入框有内容；sendDiffAnnotation 总是需要）
    */
   function _createAnnotationMessagesAndSend(annotation: string, addUserMessage: boolean = true): void {
+    // 防止重复发送
+    if (isSendingAnnotation) {
+      return
+    }
+    isSendingAnnotation = true
+
+    // 重要：先设置状态，再发送请求
+    // 这样可以防止在 sendToExtension 和状态设置之间的时间窗口内
+    // 其他代码（如 retryAfterError）检查 isStreaming/isWaitingForResponse 为 false 并发送另一个请求
+    isStreaming.value = true
+    isWaitingForResponse.value = true
+
     // 如果需要添加用户消息
     if (addUserMessage && annotation) {
       const userMessage: Message = {
@@ -2669,10 +2781,7 @@ export const useChatStore = defineStore('chat', () => {
       configId: configId.value,
       annotation: annotation
     })
-
-    // 保持 streaming 状态
-    isStreaming.value = true
-    isWaitingForResponse.value = true
+    // 注意：状态已在函数开头设置，这里不再重复设置
   }
 
   /**
@@ -2692,6 +2801,9 @@ export const useChatStore = defineStore('chat', () => {
     // 清除之前的错误状态
     error.value = null
     isLoading.value = true
+
+    // 清除待确认工具列表（已全部处理完毕）
+    pendingDiffToolIds.value = []
 
     // 重置工具调用缓冲区
     toolCallBuffer.value = ''
@@ -2964,6 +3076,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // Diff 操作后继续对话
     continueDiffWithAnnotation,
+    pendingDiffToolIds,
 
     // 初始化
     initialize
