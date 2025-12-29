@@ -56,6 +56,11 @@ type StatusChangeListener = (pending: PendingDiff[], allProcessed: boolean) => v
 type DiffSaveListener = (diff: PendingDiff) => void;
 
 /**
+ * 手动保存监听器（当用户通过 CTRL+S 保存时调用，前端应复用保存按钮的逻辑）
+ */
+type ManualSaveListener = (diff: PendingDiff) => void;
+
+/**
  * 用户中断标记
  */
 let userInterruptFlag = false;
@@ -89,7 +94,10 @@ export class DiffManager {
     
     /** Diff 保存监听器（当文件被实际保存时调用） */
     private saveCompleteListeners: Set<DiffSaveListener> = new Set();
-    
+
+    /** 手动保存监听器（当用户通过 CTRL+S 保存时调用） */
+    private manualSaveListeners: Set<ManualSaveListener> = new Set();
+
     /** 文档保存事件监听器 */
     private saveListeners: Map<string, vscode.Disposable> = new Map();
     
@@ -184,7 +192,31 @@ export class DiffManager {
             listener(diff);
         }
     }
-    
+
+    /**
+     * 添加手动保存监听器
+     */
+    public addManualSaveListener(listener: ManualSaveListener): void {
+        this.manualSaveListeners.add(listener);
+    }
+
+    /**
+     * 移除手动保存监听器
+     */
+    public removeManualSaveListener(listener: ManualSaveListener): void {
+        this.manualSaveListeners.delete(listener);
+    }
+
+    /**
+     * 通知手动保存（用户通过 CTRL+S 保存）
+     * 前端收到通知后应调用 acceptDiff 走完整流程
+     */
+    private notifyManualSave(diff: PendingDiff): void {
+        for (const listener of this.manualSaveListeners) {
+            listener(diff);
+        }
+    }
+
     /**
      * 创建待审阅的 diff
      */
@@ -262,33 +294,16 @@ export class DiffManager {
             preview: false
         });
         
-        // 5. 监听文档保存事件
+        // 5. 监听文档保存事件（用户手动 CTRL+S）
+        // 当用户手动保存时，调用 acceptDiff 完成后端状态更新，然后通知前端更新 UI
         const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
-            if (savedDoc.uri.fsPath === diff.absolutePath) {
-                // 检查用户是否修改了内容
-                // 使用标准化比较，忽略换行符差异（CRLF vs LF）
-                const savedContent = savedDoc.getText();
-                const normalizedSaved = savedContent.replace(/\r\n/g, '\n');
-                const normalizedNew = diff.newContent.replace(/\r\n/g, '\n');
-                const normalizedOriginal = diff.originalContent.replace(/\r\n/g, '\n');
+            if (savedDoc.uri.fsPath === diff.absolutePath && diff.status === 'pending') {
+                // 调用 acceptDiff 完成后端处理（移除监听器、更新状态、清理资源）
+                // isAutoSave = false 保留用户编辑，closeTab = true 关闭标签页
+                await this.acceptDiff(diff.id, true, false);
 
-                if (normalizedSaved !== normalizedNew && normalizedSaved !== normalizedOriginal) {
-                    // 用户确实修改了内容，记录下来
-                    diff.userEditedContent = savedContent;
-                }
-
-                diff.status = 'accepted';
-                saveListener.dispose();
-                this.cleanup(diff.id);
-                this.notifyStatusChange();
-                this.notifySaveComplete(diff);
-                vscode.window.showInformationMessage(t('tools.file.diffManager.saved', { filePath: diff.filePath }));
-
-                // 非自动保存模式下，用户手动保存后自动关闭 diff 标签页
-                const currentSettings = this.getSettings();
-                if (!currentSettings.autoSave) {
-                    await this.closeDiffTab(diff.absolutePath);
-                }
+                // 通知前端更新 UI 状态（前端直接调用 markDiffAsAccepted，无需再调 API）
+                this.notifyManualSave(diff);
             }
         });
         

@@ -1208,6 +1208,7 @@ export class CheckpointManager {
      * 只刷新受影响的文档
      *
      * 相比刷新所有文档，这种方式更高效，只处理实际被修改或删除的文件
+     * 使用 VS Code 内置的 revert 命令来同步磁盘内容，避免用户手动保存
      *
      * @param modifiedFiles 被修改或新增的文件路径列表
      * @param deletedFiles 被删除的文件路径列表
@@ -1216,43 +1217,58 @@ export class CheckpointManager {
         // 创建快速查找集合
         const modifiedSet = new Set(modifiedFiles.map(f => f.toLowerCase()));
         const deletedSet = new Set(deletedFiles.map(f => f.toLowerCase()));
-        
+
         try {
-            // 获取所有已打开的文本文档
-            const openDocuments = vscode.workspace.textDocuments;
-            
-            for (const doc of openDocuments) {
-                if (doc.uri.scheme !== 'file') continue;
-                
-                const docPath = doc.uri.fsPath.toLowerCase();
-                
-                // 检查文档是否在受影响列表中
-                if (modifiedSet.has(docPath)) {
-                    // 如果文档在受影响列表中，使用 revert 刷新
-                    // 这会丢弃未保存的更改并重新从磁盘加载，使文档回到干净的状态
-                    try {
-                        await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
-                        await vscode.commands.executeCommand('workbench.action.files.revert');
-                    } catch (err) {
-                        console.warn(`[CheckpointManager] Failed to revert ${doc.uri.fsPath}:`, err);
-                    }
-                }
-                // 删除的文件不做任何处理，让 VSCode 自然显示"文件已删除"的状态
-            }
-            
-            // 关闭涉及受影响文件的 diff 视图
+            // 先关闭涉及受影响文件的 diff 视图（必须在 revert 之前，否则 diff 视图会阻止 revert）
             for (const tabGroup of vscode.window.tabGroups.all) {
                 for (const tab of tabGroup.tabs) {
                     if (tab.input instanceof vscode.TabInputTextDiff) {
                         const diffInput = tab.input as vscode.TabInputTextDiff;
                         const modifiedPath = diffInput.modified.fsPath.toLowerCase();
-                        
+
                         // 如果 diff 涉及被修改或删除的文件，关闭它
                         if (modifiedSet.has(modifiedPath) || deletedSet.has(modifiedPath)) {
                             await vscode.window.tabGroups.close(tab);
                         }
                     }
                 }
+            }
+
+            // 获取所有已打开的文本文档
+            const openDocuments = vscode.workspace.textDocuments;
+
+            for (const doc of openDocuments) {
+                if (doc.uri.scheme !== 'file') continue;
+
+                const docPath = doc.uri.fsPath.toLowerCase();
+
+                // 检查文档是否在受影响列表中
+                if (modifiedSet.has(docPath)) {
+                    // 文件被修改，使用 revert 命令同步磁盘内容
+                    try {
+                        // 找到或打开编辑器（revert 命令需要文档在活动编辑器中）
+                        let editor = vscode.window.visibleTextEditors.find(
+                            e => e.document.uri.fsPath === doc.uri.fsPath
+                        );
+
+                        if (!editor) {
+                            // 文档未在可见编辑器中，打开它
+                            editor = await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
+                        }
+
+                        if (editor) {
+                            // 激活该编辑器
+                            await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false });
+
+                            // 使用 VS Code 内置的 revert 命令，从磁盘重新加载文件
+                            // 这会将文档恢复到磁盘状态，不需要用户手动保存
+                            await vscode.commands.executeCommand('workbench.action.files.revert');
+                        }
+                    } catch (err) {
+                        console.warn(`[CheckpointManager] Failed to revert ${doc.uri.fsPath}:`, err);
+                    }
+                }
+                // 删除的文件不做任何处理，让 VSCode 自然显示"文件已删除"的状态
             }
         } catch (err) {
             console.error('[CheckpointManager] Failed to refresh affected documents:', err);

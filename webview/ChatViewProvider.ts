@@ -251,7 +251,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.dependencyProgressUnsubscribe = this.dependencyManager.onProgress((event) => {
             this.handleDependencyProgressEvent(event);
         });
-        
+
+        // 28. 订阅 Diff 手动保存事件（用户 CTRL+S 保存时通知前端）
+        const diffManager = getDiffManager();
+        diffManager.addManualSaveListener((diff) => {
+            this.handleDiffManualSave(diff);
+        });
+
         console.log('LimCode backend initialized with global context');
         console.log('Effective data path:', this.storagePathManager.getEffectiveDataPath());
     }
@@ -297,13 +303,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private handleDependencyProgressEvent(event: InstallProgressEvent): void {
         if (!this._view) return;
-        
+
         this._view.webview.postMessage({
             type: 'dependencyProgress',
             data: event
         });
     }
-    
+
+    /**
+     * 处理 Diff 手动保存事件（用户 CTRL+S 保存），通知前端复用保存按钮逻辑
+     */
+    private handleDiffManualSave(diff: { id: string; filePath: string; absolutePath: string }): void {
+        if (!this._view) return;
+
+        this._view.webview.postMessage({
+            type: 'diffManualSaved',
+            data: {
+                diffId: diff.id,
+                filePath: diff.filePath,
+                absolutePath: diff.absolutePath
+            }
+        });
+    }
+
     /**
      * 处理重试状态，推送到前端
      */

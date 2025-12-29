@@ -15,7 +15,7 @@ import type { ToolUsage, Message } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
-import { sendToExtension, acceptDiff, rejectDiff, getPendingDiffs } from '../../utils/vscode'
+import { sendToExtension, acceptDiff, rejectDiff, getPendingDiffs, onMessageFromExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { generateId } from '../../utils/format'
 
@@ -300,32 +300,55 @@ let isSendingContinue = false
 /**
  * 监听 requiredDiffToolIds 变化
  * 当后端发送 pendingDiffToolIds 后，如果用户已经处理完所有 diff，自动触发继续对话
- * 这解决了用户先点击保存，后端后发送 toolIteration 的时序问题
+ * 这解决了用户先点击保存/CTRL+S，后端后发送 toolIteration 的时序问题
  */
 watch(requiredDiffToolIds, (newIds) => {
   if (newIds.size > 0 && processedDiffTools.value.size > 0) {
-    if (areAllDiffsProcessed()) {
-      // 防止重复发送
-      if (isSendingContinue) {
-        return
-      }
-      isSendingContinue = true
-
-      const annotationToSend = firstDiffAnnotation
-      resetDiffState()
-
-      chatStore.continueDiffWithAnnotation(annotationToSend)
-        .catch((err) => {
-          console.error('continueDiffWithAnnotation failed:', err)
-        })
-        .finally(() => {
-          isSendingContinue = false
-        })
-    }
+    // 复用统一的检查和继续对话逻辑
+    checkAndContinueConversation()
   }
 })
 
-// 保存 diff
+/**
+ * 标记工具为已接受，并检查是否需要继续对话
+ * 这是核心状态更新逻辑，被按钮点击和 CTRL+S 保存共用
+ */
+async function markDiffAsAccepted(tool: ToolUsage): Promise<void> {
+  // 清除 pending 状态
+  const paths = getToolFilePaths(tool)
+  for (const path of paths) {
+    pendingDiffMap.value.delete(path)
+  }
+
+  // 记录已处理
+  processedDiffTools.value.set(tool.id, 'accept')
+  processedDiffTools.value = new Map(processedDiffTools.value)
+
+  // 检查是否所有 diff 工具都已处理，是则继续对话
+  await checkAndContinueConversation()
+}
+
+/**
+ * 检查是否所有 diff 都已处理，是则继续对话
+ */
+async function checkAndContinueConversation(): Promise<void> {
+  if (!areAllDiffsProcessed()) return
+  if (isSendingContinue) return
+
+  isSendingContinue = true
+  const annotationToSend = firstDiffAnnotation
+  resetDiffState()
+
+  try {
+    await chatStore.continueDiffWithAnnotation(annotationToSend)
+  } catch (err) {
+    console.error('continueDiffWithAnnotation failed:', err)
+  } finally {
+    isSendingContinue = false
+  }
+}
+
+// 保存 diff（点击按钮触发）
 async function handleAcceptDiff(tool: ToolUsage) {
   const diffIds = getDiffIds(tool)
   if (diffIds.length === 0) return
@@ -334,64 +357,47 @@ async function handleAcceptDiff(tool: ToolUsage) {
 
   diffLoadingIds.value.add(tool.id)
   try {
-    // 第一个操作携带批注（当前是唯一正在加载的，且没有已处理的）
+    // 第一个操作携带批注
     const isFirst = diffLoadingIds.value.size === 1 && processedDiffTools.value.size === 0
     const annotation = isFirst ? chatStore.inputValue.trim() : ''
 
-    // 清空输入框（在执行前清空，防止并发时重复获取）
     if (isFirst && annotation) {
       chatStore.setInputValue('')
     }
 
-    // 执行 diff 操作
+    // 调用后端 API 执行保存
     let isFirstDiff = true
     for (const diffId of diffIds) {
       const result = await acceptDiff(diffId, isFirstDiff ? annotation : undefined)
-      // 保存第一个操作的批注
       if (isFirst && isFirstDiff && result.fullAnnotation) {
         firstDiffAnnotation = result.fullAnnotation
       }
       isFirstDiff = false
     }
 
-    // 清除 pending 状态
-    const paths = getToolFilePaths(tool)
-    for (const path of paths) {
-      pendingDiffMap.value.delete(path)
-    }
-
-    // 记录已处理
-    // 注意：后端现在在 StreamAccumulator 中统一生成工具 ID，
-    // 前端工具 ID 与后端 pendingDiffToolIds 应该一致，无需路径匹配
-    processedDiffTools.value.set(tool.id, 'accept')
-    processedDiffTools.value = new Map(processedDiffTools.value)
-
-    // 检查是否所有 diff 工具都已处理
-    if (areAllDiffsProcessed()) {
-      // 防止重复发送：在清空状态前检查并设置标志
-      if (isSendingContinue) {
-        return
-      }
-      isSendingContinue = true
-
-      // 保存批注并重置状态
-      const annotationToSend = firstDiffAnnotation
-      resetDiffState()
-
-      try {
-        await chatStore.continueDiffWithAnnotation(annotationToSend)
-      } catch (err) {
-        console.error('continueDiffWithAnnotation failed:', err)
-      } finally {
-        isSendingContinue = false
-      }
-    }
+    // 更新状态并检查是否继续对话
+    await markDiffAsAccepted(tool)
   } finally {
     diffLoadingIds.value.delete(tool.id)
   }
 }
 
-// 拒绝 diff
+/**
+ * 标记工具为已拒绝，并检查是否需要继续对话
+ */
+async function markDiffAsRejected(tool: ToolUsage): Promise<void> {
+  const paths = getToolFilePaths(tool)
+  for (const path of paths) {
+    pendingDiffMap.value.delete(path)
+  }
+
+  processedDiffTools.value.set(tool.id, 'reject')
+  processedDiffTools.value = new Map(processedDiffTools.value)
+
+  await checkAndContinueConversation()
+}
+
+// 拒绝 diff（点击按钮触发）
 async function handleRejectDiff(tool: ToolUsage) {
   const diffIds = getDiffIds(tool)
   if (diffIds.length === 0) return
@@ -400,58 +406,25 @@ async function handleRejectDiff(tool: ToolUsage) {
 
   diffLoadingIds.value.add(tool.id)
   try {
-    // 第一个操作携带批注（当前是唯一正在加载的，且没有已处理的）
     const isFirst = diffLoadingIds.value.size === 1 && processedDiffTools.value.size === 0
     const annotation = isFirst ? chatStore.inputValue.trim() : ''
 
-    // 清空输入框（在执行前清空，防止并发时重复获取）
     if (isFirst && annotation) {
       chatStore.setInputValue('')
     }
 
-    // 执行 diff 操作
+    // 调用后端 API 执行拒绝
     let isFirstDiff = true
     for (const diffId of diffIds) {
       const result = await rejectDiff(diffId, isFirstDiff ? annotation : undefined)
-      // 保存第一个操作的批注
       if (isFirst && isFirstDiff && result.fullAnnotation) {
         firstDiffAnnotation = result.fullAnnotation
       }
       isFirstDiff = false
     }
 
-    // 清除 pending 状态
-    const paths = getToolFilePaths(tool)
-    for (const path of paths) {
-      pendingDiffMap.value.delete(path)
-    }
-
-    // 记录已处理
-    processedDiffTools.value.set(tool.id, 'reject')
-    processedDiffTools.value = new Map(processedDiffTools.value)
-
-    // 检查是否所有 diff 工具都已处理
-    const allProcessed = areAllDiffsProcessed()
-
-    if (allProcessed) {
-      // 防止重复发送：在清空状态前检查并设置标志
-      if (isSendingContinue) {
-        return
-      }
-      isSendingContinue = true
-
-      // 保存批注并重置状态
-      const annotationToSend = firstDiffAnnotation
-      resetDiffState()
-
-      try {
-        await chatStore.continueDiffWithAnnotation(annotationToSend)
-      } catch (err) {
-        console.error('continueDiffWithAnnotation failed:', err)
-      } finally {
-        isSendingContinue = false
-      }
-    }
+    // 更新状态并检查是否继续对话
+    await markDiffAsRejected(tool)
   } finally {
     diffLoadingIds.value.delete(tool.id)
   }
@@ -543,9 +516,36 @@ watchEffect(() => {
   }
 })
 
-// 组件卸载时停止轮询
+// 监听后端的手动保存通知（用户 CTRL+S 保存时）
+// 直接调用状态更新逻辑，无需再调用后端 API（文件已保存）
+let manualSaveUnsubscribe: (() => void) | null = null
+
+onMounted(() => {
+  manualSaveUnsubscribe = onMessageFromExtension((message) => {
+    if (message.type === 'diffManualSaved') {
+      const { filePath } = message.data as { diffId: string; filePath: string; absolutePath: string }
+      // 根据 filePath 找到对应的工具
+      const tool = enhancedTools.value.find(t => {
+        if (t.name !== 'apply_diff' && t.name !== 'write_file') return false
+        const paths = getToolFilePaths(t)
+        return paths.includes(filePath)
+      })
+
+      if (tool && !processedDiffTools.value.has(tool.id)) {
+        // 直接更新状态，无需调用 API（后端 saveListener 已确认文件已保存）
+        markDiffAsAccepted(tool)
+      }
+    }
+  })
+})
+
+// 组件卸载时停止轮询和取消监听
 onBeforeUnmount(() => {
   stopDiffPolling()
+  if (manualSaveUnsubscribe) {
+    manualSaveUnsubscribe()
+    manualSaveUnsubscribe = null
+  }
 })
 
 // 用户决定状态：记录每个工具的用户决定（true=确认，false=拒绝，undefined=未决定）
