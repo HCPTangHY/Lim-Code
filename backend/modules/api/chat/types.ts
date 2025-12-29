@@ -123,6 +123,8 @@ export interface ChatStreamToolIterationData {
     checkpoints?: CheckpointRecord[];
     /** 标记需要等待用户批注（工具确认后使用） */
     needAnnotation?: true;
+    /** 需要用户确认的文件修改工具 ID 列表（后端直接告知，前端无需推断） */
+    pendingDiffToolIds?: string[];
 }
 
 /**

@@ -1645,6 +1645,9 @@ export interface LanguageMessages {
                     saveChanges: string;
                     rejectChanges: string;
                     waitingForAction: string;
+                    saved: string;
+                    rejected: string;
+                    waitingOthers: string;
                 };
                 /** create_directory 内容面板 */
                 createDirectoryPanel: {

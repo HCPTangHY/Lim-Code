@@ -146,8 +146,19 @@ export class ConversationManager {
     private async loadHistory(conversationId: string): Promise<ConversationHistory> {
         const history = await this.storage.loadHistory(conversationId);
         if (!history) {
-            // 如果不存在，创建空对话
-            await this.createConversation(conversationId);
+            // 如果不存在，尝试创建空对话
+            // 使用 try-catch 处理竞态条件：多个请求同时检测到不存在并尝试创建
+            try {
+                await this.createConversation(conversationId);
+            } catch (err) {
+                // 如果是"已存在"错误，说明其他请求已经创建了，直接重新加载
+                const retryHistory = await this.storage.loadHistory(conversationId);
+                if (retryHistory) {
+                    return retryHistory;
+                }
+                // 如果重新加载仍然失败，抛出原始错误
+                throw err;
+            }
             return [];
         }
         return history;

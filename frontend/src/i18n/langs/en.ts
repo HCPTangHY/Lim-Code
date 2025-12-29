@@ -1588,7 +1588,10 @@ const en: LanguageMessages = {
                     reject: 'Reject',
                     saveChanges: 'Save changes (Ctrl+S)',
                     rejectChanges: 'Discard changes',
-                    waitingForAction: 'Waiting for user action'
+                    waitingForAction: 'Waiting for user action',
+                    saved: 'Saved',
+                    rejected: 'Rejected',
+                    waitingOthers: 'Waiting for others...'
                 },
                 createDirectoryPanel: {
                     title: 'Create Directory',

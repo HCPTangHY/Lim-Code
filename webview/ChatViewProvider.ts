@@ -2222,12 +2222,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 ...data,
                 abortSignal: abortController.signal
             });
-            
+
+            let chunkIndex = 0;
             for await (const chunk of stream) {
+                chunkIndex++;
+                console.log(`[ChatViewProvider.handleChatStream] chunk #${chunkIndex}`, {
+                    hasToolIteration: 'toolIteration' in chunk,
+                    hasContent: 'content' in chunk,
+                    hasError: 'error' in chunk,
+                    needAnnotation: (chunk as any).needAnnotation
+                });
+
                 // 不在这里检查 abortController.signal.aborted
                 // 让 ChatHandler 检测到取消后 yield cancelled 消息
                 // 这样前端可以接收到带有计时信息的 cancelled 消息
-                
+
                 // 根据不同类型处理chunk
                 if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
                     // ChatStreamCheckpointsData - 立即发送检查点
@@ -2274,6 +2283,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                 } else if ('toolIteration' in chunk && chunk.toolIteration) {
                     // ChatStreamToolIterationData - 工具调用迭代完成
+                    console.log('[Webview-ChatStream] toolIteration chunk:', {
+                        needAnnotation: (chunk as any).needAnnotation,
+                        pendingDiffToolIds: (chunk as any).pendingDiffToolIds,
+                        toolResultNames: (chunk as any).toolResults?.map((r: any) => r.name)
+                    });
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2282,7 +2296,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             content: chunk.content,
                             toolIteration: true,
                             toolResults: (chunk as any).toolResults,
-                            checkpoints: (chunk as any).checkpoints
+                            checkpoints: (chunk as any).checkpoints,
+                            needAnnotation: (chunk as any).needAnnotation,
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2424,7 +2440,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             content: chunk.content,
                             toolIteration: true,
                             toolResults: (chunk as any).toolResults,
-                            checkpoints: (chunk as any).checkpoints
+                            checkpoints: (chunk as any).checkpoints,
+                            needAnnotation: (chunk as any).needAnnotation,
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2568,7 +2586,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             toolIteration: true,
                             toolResults: (chunk as any).toolResults,
                             checkpoints: (chunk as any).checkpoints,
-                            needAnnotation: (chunk as any).needAnnotation
+                            needAnnotation: (chunk as any).needAnnotation,
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2642,7 +2661,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         let hasError = false;
         const conversationId = data.conversationId;
 
-        console.log(`[ChatViewProvider.handleContinueWithAnnotationStream] Starting stream for conversation: ${conversationId}`);
+        console.log(`[ChatViewProvider.handleContinueWithAnnotationStream] ENTRY`, {
+            conversationId,
+            annotation: data.annotation,
+            requestId,
+            timestamp: Date.now()
+        });
 
         // 创建取消控制器
         const abortController = new AbortController();
@@ -2703,7 +2727,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             content: chunk.content,
                             toolIteration: true,
                             toolResults: (chunk as any).toolResults,
-                            checkpoints: (chunk as any).checkpoints
+                            checkpoints: (chunk as any).checkpoints,
+                            needAnnotation: (chunk as any).needAnnotation,
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2837,7 +2863,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             content: chunk.content,
                             toolIteration: true,
                             toolResults: (chunk as any).toolResults,
-                            checkpoints: (chunk as any).checkpoints
+                            checkpoints: (chunk as any).checkpoints,
+                            needAnnotation: (chunk as any).needAnnotation,
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
