@@ -187,22 +187,12 @@ export const useChatStore = defineStore('chat', () => {
    */
   const pendingAnnotation = ref<string>('')
 
-  /**
-   * 用户是否已开始处理 diff（点击了保存/拒绝按钮）
-   *
-   * 这个标志解决了时序问题：
-   * 1. 用户点击保存/拒绝按钮
-   * 2. ToolMessage.vue 调用 markDiffProcessingStarted()
-   * 3. 后端发送 toolIteration
-   * 4. handleStreamChunk 检查此标志，跳过设置 pendingDiffToolIds
-   * 5. 避免按钮重新显示
-   *
-   * 重置时机：
-   * - continueDiffWithAnnotation 完成后
-   * - 创建新对话时
-   * - 切换对话时
-   */
-  const isDiffProcessingStarted = ref(false)
+
+  /** 已处理的 diff 工具（store 级别管理，解决多组件实例状态同步） */
+  const processedDiffTools = ref<Map<string, 'accept' | 'reject'>>(new Map())
+
+  /** 是否正在发送 continueDiffWithAnnotation 请求 */
+  const isSendingDiffContinue = ref(false)
 
   // ============ 辅助函数 ============
   
@@ -588,14 +578,13 @@ export const useChatStore = defineStore('chat', () => {
 
     currentConversationId.value = null
     allMessages.value = []  // 清空消息
-    checkpoints.value = []  // 清空检查点
+    checkpoints.value = []
     error.value = null
-    pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
-    pendingAnnotation.value = ''  // 清空待处理的批注
-    isDiffProcessingStarted.value = false  // 重置 diff 处理标志
-    isSendingAnnotation = false  // 【关键】重置批注发送标志
-
-    // 清除所有加载和流式状态
+    pendingDiffToolIds.value = []
+    pendingAnnotation.value = ''
+    isSendingAnnotation = false
+    processedDiffTools.value = new Map()
+    isSendingDiffContinue.value = false
     isLoading.value = false
     isStreaming.value = false
     streamingMessageId.value = null
@@ -710,15 +699,15 @@ export const useChatStore = defineStore('chat', () => {
       await cancelStreamAndRejectTools()
     }
     
-    // 清除状态
     currentConversationId.value = id
     allMessages.value = []
     checkpoints.value = []
     error.value = null
-    pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
-    pendingAnnotation.value = ''  // 清空待处理的批注
-    isDiffProcessingStarted.value = false  // 重置 diff 处理标志
-    isSendingAnnotation = false  // 【关键】重置批注发送标志，防止上次请求未完成导致后续操作失败
+    pendingDiffToolIds.value = []
+    pendingAnnotation.value = ''
+    isSendingAnnotation = false
+    processedDiffTools.value = new Map()
+    isSendingDiffContinue.value = false
     isLoading.value = false
     isStreaming.value = false
     streamingMessageId.value = null
@@ -1418,16 +1407,11 @@ export const useChatStore = defineStore('chat', () => {
           tools: restoredTools
         }
 
-        // 重要：在更新消息到数组之前，先设置 pendingDiffToolIds
-        // 这样当 ToolMessage 组件因为 allMessages 变化而重新渲染时，
-        // pendingDiffToolIds 已经包含正确的数据
-        //
-        // 注意：必须始终设置 pendingDiffToolIds，因为：
-        // 1. areAllDiffsProcessed() 依赖 requiredDiffToolIds（由 pendingDiffToolIds 派生）
-        // 2. 如果不设置，areAllDiffsProcessed() 会因为 requiredDiffToolIds.size===0 返回 false
-        // 3. 按钮重新显示的问题在 ToolMessage.vue 的 shouldShowDiffArea 中通过检查 isDiffProcessingStarted 解决
+        // 设置新的 pendingDiffToolIds 并重置发送标志
         if (chunk.needAnnotation && chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
           pendingDiffToolIds.value = chunk.pendingDiffToolIds
+          isSendingDiffContinue.value = false
+          isSendingAnnotation = false
         }
 
         // 用新对象替换数组中的旧对象
@@ -1529,24 +1513,15 @@ export const useChatStore = defineStore('chat', () => {
           return
         }
 
-        // 后端直接告知需要确认的工具 ID 列表
         if (chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
-          // pendingDiffToolIds 通常已在消息更新前设置
-          // 这里再次设置作为回退保护（如果 messageIndex === -1）
           if (pendingDiffToolIds.value.length === 0) {
             pendingDiffToolIds.value = chunk.pendingDiffToolIds
           }
 
-          // 【重要】处理工具确认时用户输入的批注
-          // 后端通过 pendingAnnotation 返回暂存的批注，前端必须：
-          // 1. 存储批注以便 diff 确认时发送（continueDiffWithAnnotation 会合并）
-          // 2. 清空输入框
-          // 3. 显示用户消息
-          // 注意：此字段需要 ChatViewProvider 中转发，曾因遗漏导致批注丢失
+          // 处理工具确认时用户输入的批注
           if (chunk.pendingAnnotation) {
             pendingAnnotation.value = chunk.pendingAnnotation
             inputValue.value = ''
-            // 在前端添加用户消息显示（批注尚未添加到对话历史，等待 diff 确认时一并发送）
             const userMessage: Message = {
               id: generateId(),
               role: 'user',
@@ -1557,14 +1532,9 @@ export const useChatStore = defineStore('chat', () => {
             allMessages.value.push(userMessage)
           }
 
-          // 结束 streaming 状态，等待用户通过保存/拒绝按钮触发 continueDiffWithAnnotation
           streamingMessageId.value = null
           isStreaming.value = false
           isWaitingForResponse.value = false
-          // 注意：不要在这里重置 isSendingAnnotation！
-          // 如果用户已经点击了保存/拒绝按钮，isSendingAnnotation 为 true，
-          // 需要保持这个状态直到 complete/cancelled/error，防止后续 toolIteration 重复发送请求
-          // 如果用户尚未点击按钮，isSendingAnnotation 本来就是 false，不需要重置
           return
         }
 
@@ -1648,11 +1618,10 @@ export const useChatStore = defineStore('chat', () => {
       
       streamingMessageId.value = null
       isStreaming.value = false
-      isWaitingForResponse.value = false  // 结束等待
-      isSendingAnnotation = false  // 重置防重复标志
-      isDiffProcessingStarted.value = false  // 重置 diff 处理标志
+      isWaitingForResponse.value = false
+      isSendingAnnotation = false
+      isSendingDiffContinue.value = false
 
-      // 流式完成后更新对话元数据
       updateConversationAfterMessage()
     } else if (chunk.type === 'checkpoints') {
       // 立即收到的检查点（用户消息前后、模型消息前）
@@ -1735,29 +1704,26 @@ export const useChatStore = defineStore('chat', () => {
       streamingMessageId.value = null
       isStreaming.value = false
       isWaitingForResponse.value = false
-      isSendingAnnotation = false  // 重置防重复标志
-      isDiffProcessingStarted.value = false  // 重置 diff 处理标志
+      isSendingAnnotation = false
+      isSendingDiffContinue.value = false
     } else if (chunk.type === 'error') {
       error.value = chunk.error || {
         code: 'STREAM_ERROR',
         message: 'Stream error'
       }
-      
+
       if (streamingMessageId.value) {
-        // 只删除正在流式处理的空消息
         const messageToRemove = allMessages.value.find(m => m.id === streamingMessageId.value)
-        
-        // 只删除空的流式消息
         if (messageToRemove && messageToRemove.streaming && !messageToRemove.content && !messageToRemove.tools) {
           allMessages.value = allMessages.value.filter(m => m.id !== streamingMessageId.value)
         }
         streamingMessageId.value = null
       }
-      
+
       isStreaming.value = false
-      isWaitingForResponse.value = false  // 结束等待
-      isSendingAnnotation = false  // 重置防重复标志
-      isDiffProcessingStarted.value = false  // 重置 diff 处理标志
+      isWaitingForResponse.value = false
+      isSendingAnnotation = false
+      isSendingDiffContinue.value = false
     }
   }
 
@@ -2916,73 +2882,110 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
-    // 防止重复发送（多组件实例可能同时调用此方法）
-    // 检查由 _createAnnotationMessagesAndSend 内部统一处理
+    // 【关键】防止重复发送（多组件实例可能同时调用此方法）
+    // 使用 store 级别的 isSendingDiffContinue 而非组件级别的变量
+    if (isSendingDiffContinue.value) {
+      return
+    }
+    // 同时检查 isSendingAnnotation（_createAnnotationMessagesAndSend 内部标志）
     if (isSendingAnnotation) {
       return
     }
-
-    // 清除之前的错误状态
+    isSendingDiffContinue.value = true
+    processedDiffTools.value = new Map()
     error.value = null
     isLoading.value = true
-
-    // 清除待确认工具列表（已全部处理完毕）
     pendingDiffToolIds.value = []
-
-    // 重置工具调用缓冲区
     toolCallBuffer.value = ''
     inToolCall.value = null
 
-    // 合并存储的 pendingAnnotation 和传入的 annotation
-    // pendingAnnotation 是工具确认时用户输入的批注，在收到 chunk 时已存储
-    // annotation 是 diff 确认时的格式化批注（如 "[用户已保存修改] xxx"）
-    let finalAnnotation = ''
+    // 合并 pendingAnnotation 和传入的 annotation
     const storedAnnotation = pendingAnnotation.value
     const newAnnotation = annotation.trim()
-
+    let finalAnnotation = ''
     if (storedAnnotation && newAnnotation) {
-      // 两者都有，合并
       finalAnnotation = `${storedAnnotation}\n${newAnnotation}`
-    } else if (storedAnnotation) {
-      finalAnnotation = storedAnnotation
-    } else if (newAnnotation) {
-      finalAnnotation = newAnnotation
+    } else {
+      finalAnnotation = storedAnnotation || newAnnotation
     }
-
-    // 清除 pendingAnnotation 状态
     pendingAnnotation.value = ''
 
-    // 更新对话信息
     const conv = conversations.value.find(c => c.id === currentConversationId.value)
+    const needAddUserMessage = !storedAnnotation && !!newAnnotation
     if (conv) {
       conv.updatedAt = Date.now()
-      // 如果有批注，会添加用户消息 + AI 占位消息；否则只添加 AI 占位消息
-      // 注意：如果有 storedAnnotation，用户消息已经在收到 chunk 时显示了
-      // 只有 newAnnotation 需要在这里添加用户消息
-      const needAddUserMessage = !storedAnnotation && !!newAnnotation
       conv.messageCount = allMessages.value.length + (needAddUserMessage ? 2 : 1)
     }
 
-    // 发送批注并继续对话
-    // 如果有 storedAnnotation，用户消息已显示，不需要再添加
-    // 如果只有 newAnnotation，需要添加用户消息
-    const needAddUserMessage = !storedAnnotation && !!newAnnotation
     _createAnnotationMessagesAndSend(finalAnnotation, needAddUserMessage)
-
-    // 注意：isDiffProcessingStarted 在 complete/cancelled/error 时重置
-    // 不在这里重置，因为请求是异步的，需要等待响应后才能重置
 
     isLoading.value = false
   }
 
   /**
-   * 标记用户已开始处理 diff（点击了保存/拒绝按钮）
-   *
-   * 由 ToolMessage.vue 在用户点击按钮时调用
-   * 用于防止 handleStreamChunk 设置 pendingDiffToolIds 导致按钮重新显示
+   * 标记工具为已处理（保存或拒绝）
    */
-  function markDiffProcessingStarted(): void {
-    isDiffProcessingStarted.value = true
+  function markDiffToolProcessed(toolId: string, decision: 'accept' | 'reject'): void {
+    processedDiffTools.value.set(toolId, decision)
+    // 触发响应式更新
+    processedDiffTools.value = new Map(processedDiffTools.value)
+  }
+
+  /**
+   * 检查工具是否已处理
+   */
+  function isDiffToolProcessed(toolId: string): boolean {
+    return processedDiffTools.value.has(toolId)
+  }
+
+  /**
+   * 获取工具的处理决定
+   */
+  function getDiffToolDecision(toolId: string): 'accept' | 'reject' | undefined {
+    return processedDiffTools.value.get(toolId)
+  }
+
+  /**
+   * 检查是否所有必需的 diff 工具都已处理
+   */
+  function areAllRequiredDiffsProcessed(): boolean {
+    // 必须有已处理的工具
+    if (processedDiffTools.value.size === 0) {
+      return false
+    }
+    // 必须等待后端发送 pendingDiffToolIds
+    if (pendingDiffToolIds.value.length === 0) {
+      return false
+    }
+    // 检查所有必需的工具是否都已处理
+    for (const id of pendingDiffToolIds.value) {
+      if (!processedDiffTools.value.has(id)) {
+        return false
+      }
+    }
+    return true
+  }
+
+  /**
+   * 检查是否还有未处理的 diff（用于显示"等待其他文件"提示）
+   */
+  function hasRemainingRequiredDiffs(): boolean {
+    if (processedDiffTools.value.size === 0) return false
+    if (pendingDiffToolIds.value.length === 0) return false
+    for (const id of pendingDiffToolIds.value) {
+      if (!processedDiffTools.value.has(id)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * 清除 diff 处理状态（在继续对话前调用）
+   */
+  function clearDiffProcessingState(): void {
+    processedDiffTools.value = new Map()
+    isSendingDiffContinue.value = false
   }
 
   /**
@@ -3235,11 +3238,17 @@ export const useChatStore = defineStore('chat', () => {
     // 上下文总结
     summarizeContext,
 
-    // Diff 操作后继续对话
+    // Diff 操作
     continueDiffWithAnnotation,
     pendingDiffToolIds,
-    markDiffProcessingStarted,
-    isDiffProcessingStarted,
+    processedDiffTools,
+    isSendingDiffContinue,
+    markDiffToolProcessed,
+    isDiffToolProcessed,
+    getDiffToolDecision,
+    areAllRequiredDiffsProcessed,
+    hasRemainingRequiredDiffs,
+    clearDiffProcessingState,
 
     // UI 辅助方法
     addUserMessageToUI,

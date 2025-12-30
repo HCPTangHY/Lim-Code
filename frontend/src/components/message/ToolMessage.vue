@@ -28,11 +28,11 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 
-// 【关键】必须使用 storeToRefs 解构响应式状态！
-// 直接解构 const { isDiffProcessingStarted } = chatStore 会丢失响应性，
-// 导致组件中的值是挂载时的快照，不会跟随 store 变化更新。
-// 这是之前 bug 的根本原因。
-const { isDiffProcessingStarted } = storeToRefs(chatStore)
+// 从 store 解构响应式状态（必须使用 storeToRefs 保持响应性）
+const {
+  processedDiffTools,
+  isSendingDiffContinue
+} = storeToRefs(chatStore)
 
 // 确保 MCP 工具已注册
 watchEffect(() => {
@@ -63,21 +63,12 @@ const enhancedTools = computed<ToolUsage[]>(() => {
         status = 'warning'
       }
 
-      // 关键修复：如果工具需要确认，保持 pending 状态
-      // 同时检查 pendingDiffMap 和 chatStore.pendingDiffToolIds（后者作为回退）
-      //
-      // 【重要】isDiffProcessingStarted 检查逻辑：
-      // - 对于新工具（不在 processedDiffTools 中）：始终检查 pending 状态
-      // - 对于已处理的工具：如果用户正在处理，跳过检查（防止状态回退到 pending）
-      // 这样可以：
-      // 1. 新工具正常显示 pending 状态和按钮
-      // 2. 已处理的工具不会因为轮询数据而状态回退
+      // 如果工具需要确认，保持 pending 状态
+      // 已处理的工具跳过检查（防止状态回退到 pending）
       if ((tool.name === 'apply_diff' || tool.name === 'write_file') && status !== 'error') {
-        // 只有当工具已被处理且用户正在处理时，才跳过 pending 检查
         const isAlreadyProcessed = processedDiffTools.value.has(tool.id)
-        const skipPendingCheck = isAlreadyProcessed && isDiffProcessingStarted.value
 
-        if (!skipPendingCheck) {
+        if (!isAlreadyProcessed) {
           let hasPending = false
 
           // 检查 pendingDiffMap（轮询获取）
@@ -154,8 +145,8 @@ const pendingDiffMap = ref<Map<string, string>>(new Map())
 // 轮询定时器
 let diffPollTimer: ReturnType<typeof setInterval> | null = null
 
-// 已处理的 diff 工具：toolId -> 'accept' | 'reject'
-const processedDiffTools = ref<Map<string, 'accept' | 'reject'>>(new Map())
+// 已处理的 diff 工具状态已移至 store 级别管理
+// 解决多组件实例状态不同步问题
 
 // diff 操作加载状态
 const diffLoadingIds = ref<Set<string>>(new Set())
@@ -188,37 +179,14 @@ function getToolFilePaths(tool: ToolUsage): string[] {
 /**
  * 检查是否应该显示 diff 操作区域（保存/拒绝按钮）
  *
- * 【重要】此函数与后端 hasFileModificationToolInResults 配合工作
- *
- * 显示条件（满足任一）：
- * 1. 工具已被用户处理（在 processedDiffTools 中）- 显示处理结果
- * 2. 工具 ID 在 requiredDiffToolIds 中（后端直接告知）- 需要用户确认
- * 3. 工具文件路径在 pendingDiffMap 中（轮询获取）- 有待处理的 diff
- * 4. 工具结果中有 pending 状态 - 结果表明需要确认
+ * 显示条件：
+ * 1. 工具已被用户处理（显示处理结果）
+ * 2. 工具 ID 在 requiredDiffToolIds 中（后端告知需要确认）
+ * 3. 工具结果中有 pendingDiffId
  *
  * 不显示条件：
- * - 工具状态是 error（diff 应用失败，无需用户确认）
- * - 工具状态是 success 且不在 processedDiffTools 中（说明是历史记录，已处理完毕）
- *
- * 【历史问题 - 两条消息 bug】
- * 之前后端 hasFileModificationToolInResults 只检查工具名称，不检查 pendingDiffId
- * 导致工具执行失败时：
- * - 后端返回 needAnnotation: true（等待用户确认）
- * - 但 pendingDiffToolIds 为空，前端 _createAnnotationMessagesAndSend 被触发
- * - 同时用户可能点击了按钮触发 continueDiffWithAnnotation
- * - 结果：两条 continueWithAnnotation 请求
- *
- * 【当前设计】
- * - 后端只在有 pendingDiffId 时返回 needAnnotation: true
- * - 前端 error 状态不显示按钮
- * - 两端逻辑一致，避免竞态
- *
- * 【历史问题 - 并发 AI 请求 bug】
- * 轮询 pendingDiffMap 可能比后端发送 toolIteration 更快
- * 导致按钮提前显示，用户点击时 isStreaming 仍为 true
- * 解决方案：
- * - 必须等待后端发送 pendingDiffToolIds（通过 requiredDiffToolIds 检查）
- * - 仅依赖轮询显示按钮不够安全，必须结合后端确认
+ * - 工具状态是 error（diff 应用失败）
+ * - 工具状态是 success 且不在待确认列表中（历史记录）
  */
 function shouldShowDiffArea(tool: ToolUsage): boolean {
   // 已处理的工具始终显示（显示处理结果）
@@ -231,32 +199,17 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
     return false
   }
 
-  // 【注意】不在这里检查 isDiffProcessingStarted
-  // isDiffProcessingStarted 的保护已在其他地方实现：
-  // 1. shouldPollDiffs() - 阻止轮询更新 pendingDiffMap
-  // 2. 轮询回调 - 再次检查防止竞态
-  // 3. enhancedTools computed - 阻止将工具状态设为 pending
-  // 如果在这里检查，会阻止所有新工具的按钮显示，而不仅仅是当前正在处理的工具
-
-  // 【关键检查】错误状态的工具不显示按钮
-  // diff 应用失败时没有 pending diff 需要确认
-  // 后端 hasFileModificationToolInResults 也会返回 false，直接继续 AI 对话
-  // 如果这里显示按钮，用户点击后会发送 continueDiffWithAnnotation
-  // 同时后端已经在继续对话，导致两条消息
+  // 错误状态不显示按钮
   if (tool.status === 'error') {
     return false
   }
 
-  // 【关键】必须等待后端确认（通过 pendingDiffToolIds）
-  // 仅依赖轮询 pendingDiffMap 不安全，可能导致按钮提前显示
-  // 用户点击时后端还没发送 toolIteration，isStreaming 仍为 true，导致并发请求
   // 检查工具 ID 是否在后端告知的待确认列表中
   if (requiredDiffToolIds.value.has(tool.id)) {
     return true
   }
 
-  // 如果工具状态已经是 success 且不在待确认列表中，说明是历史记录或已完成的工具
-  // 不应该显示按钮（避免重新进入会话时显示已完成工具的按钮）
+  // success 状态且不在待确认列表中，说明是历史记录
   if (tool.status === 'success') {
     return false
   }
@@ -270,7 +223,6 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
   }
 
   // 检查 result 中是否有 pendingDiffId
-  // 【关键修复】只检查 pendingDiffId 是否存在，不再要求 status === 'pending'
   const resultData = (tool.result as any)?.data
   if (resultData?.pendingDiffId) {
     return true
@@ -324,146 +276,71 @@ function isDiffLoading(toolId: string): boolean {
   return diffLoadingIds.value.has(toolId)
 }
 
-// 检查 diff 工具是否已处理
+// 检查 diff 工具是否已处理（使用 store 方法）
 // 注意：一旦用户点击保存/拒绝，就认为工具已处理，不再根据 pendingDiffMap 判断
 function isDiffProcessed(tool: ToolUsage): boolean {
-  // 如果工具已被标记为已处理，直接返回 true
-  // 不再检查 pendingDiffMap，因为：
-  // 1. 点击按钮会处理该工具的所有 diff
-  // 2. 轮询可能在处理完成后仍返回旧数据，导致误判
-  if (processedDiffTools.value.has(tool.id)) {
-    return true
-  }
-  return false
+  // 使用 store 方法检查
+  return chatStore.isDiffToolProcessed(tool.id)
 }
 
-// 获取 diff 工具的处理结果
+// 获取 diff 工具的处理结果（使用 store 方法）
 function getDiffDecision(toolId: string): 'accept' | 'reject' | undefined {
-  return processedDiffTools.value.get(toolId)
+  return chatStore.getDiffToolDecision(toolId)
 }
 
 /**
  * 检查是否所有 diff 工具都已处理
  *
- * 判断逻辑：
- * 1. 必须有已处理的工具
- * 2. 必须等待后端发送 pendingDiffToolIds（通过 toolIteration 的 needAnnotation）
- * 3. 所有 requiredDiffToolIds 都已处理才返回 true
- *
- * 【关键】必须等待 requiredDiffToolIds 被设置后才能继续
- * 否则用户点击按钮太快（后端还没发送 toolIteration），会导致：
- * - 前端发送 continueWithAnnotation
- * - 后端同时也在处理，发送 toolIteration
- * - 两条并发请求
- *
- * 【注意】不再检查 pendingDiffMap.size
- * 原因：轮询可能在用户点击保存后仍返回旧数据，导致 pendingDiffMap 不为空
- * 这会阻止对话继续。我们只需要检查 requiredDiffToolIds 是否都已处理即可。
+ * 【重要】此函数已被废弃，改用 store 的 areAllRequiredDiffsProcessed()
+ * 保留此函数仅为向后兼容（如果有其他地方调用）
  */
 function areAllDiffsProcessed(): boolean {
-  // 必须有已处理的工具
-  if (processedDiffTools.value.size === 0) {
-    return false
-  }
-
-  // 【关键检查】必须等待后端发送 pendingDiffToolIds
-  // 如果 requiredDiffToolIds 为空，说明后端还没发送 toolIteration，必须等待
-  // 这解决了用户点击按钮太快导致的两条并发请求问题
-  if (requiredDiffToolIds.value.size === 0) {
-    return false
-  }
-
-  // 后端已发送 pendingDiffToolIds，检查是否都已处理
-  for (const id of requiredDiffToolIds.value) {
-    if (!processedDiffTools.value.has(id)) {
-      return false
-    }
-  }
-
-  return true
+  return chatStore.areAllRequiredDiffsProcessed()
 }
 
 /**
  * 检查是否还有未处理的 diff
  *
- * 用于显示"等待其他 diff"提示
- * 基于 requiredDiffToolIds 判断，不再依赖 pendingDiffMap（避免轮询竞态）
+ * 【重要】此函数已被废弃，改用 store 的 hasRemainingRequiredDiffs()
+ * 保留此函数仅为向后兼容
  */
 function hasRemainingDiffs(): boolean {
-  // 如果没有已处理的工具，不显示等待提示
-  if (processedDiffTools.value.size === 0) return false
-  // 如果 requiredDiffToolIds 为空，说明后端还没发送，不显示等待提示
-  if (requiredDiffToolIds.value.size === 0) return false
-  // 检查是否有未处理的工具
-  for (const id of requiredDiffToolIds.value) {
-    if (!processedDiffTools.value.has(id)) {
-      return true
-    }
-  }
-  return false
+  return chatStore.hasRemainingRequiredDiffs()
 }
 
 /**
  * 重置组件内 diff 相关状态（在继续对话后调用）
- * 注意：requiredDiffToolIds 由 store 管理，会在 continueDiffWithAnnotation 中清除
- *
- * 【重要】不再清空 processedDiffTools！
- * 原因：在 continueDiffWithAnnotation 发送请求后、complete 到达前，
- * 如果清空 processedDiffTools，isDiffProcessed 会返回 false，
- * 加上轮询可能返回旧数据，会导致按钮重新显示。
- * processedDiffTools 会在 complete 时由 isDiffProcessingStarted=false 自然失效。
  */
 function resetDiffState(): void {
-  // 不清空 processedDiffTools，保留已处理状态直到对话完成
   firstDiffAnnotation = ''
 }
 
-// 是否正在发送继续对话请求（防止重复发送）
-let isSendingContinue = false
-
-/**
- * 监听 requiredDiffToolIds 变化
- * 当后端发送 pendingDiffToolIds 后，如果用户已经处理完所有 diff，自动触发继续对话
- * 这解决了用户先点击保存/CTRL+S，后端后发送 toolIteration 的时序问题
- *
- * 注意：后端在 StreamAccumulator 中统一生成工具 ID，
- * 前端工具 ID 与后端 pendingDiffToolIds 应该一致，无需路径匹配
- */
+// 监听 requiredDiffToolIds 变化，自动触发继续对话
 watch(requiredDiffToolIds, (newIds) => {
   if (newIds.size > 0 && processedDiffTools.value.size > 0) {
     checkAndContinueConversation()
   }
 })
 
-/**
- * 标记工具为已接受，并检查是否需要继续对话
- * 这是核心状态更新逻辑，被按钮点击和 CTRL+S 保存共用
- */
+// 标记工具为已接受，并检查是否需要继续对话
 async function markDiffAsAccepted(tool: ToolUsage): Promise<void> {
-  // 清除 pending 状态
   const paths = getToolFilePaths(tool)
   for (const path of paths) {
     pendingDiffMap.value.delete(path)
   }
-
-  // 记录已处理
-  // 注意：后端在 StreamAccumulator 中统一生成工具 ID，
-  // 前端工具 ID 与后端 pendingDiffToolIds 应该一致，无需路径匹配
-  processedDiffTools.value.set(tool.id, 'accept')
-  processedDiffTools.value = new Map(processedDiffTools.value)
-
-  // 检查是否所有 diff 工具都已处理，是则继续对话
+  chatStore.markDiffToolProcessed(tool.id, 'accept')
   await checkAndContinueConversation()
 }
 
-/**
- * 检查是否所有 diff 都已处理，是则继续对话
- */
+// 检查是否所有 diff 都已处理，是则继续对话
 async function checkAndContinueConversation(): Promise<void> {
-  if (!areAllDiffsProcessed()) return
-  if (isSendingContinue) return
+  if (!chatStore.areAllRequiredDiffsProcessed()) {
+    return
+  }
+  if (isSendingDiffContinue.value) {
+    return
+  }
 
-  isSendingContinue = true
   const annotationToSend = firstDiffAnnotation
   resetDiffState()
 
@@ -471,45 +348,26 @@ async function checkAndContinueConversation(): Promise<void> {
     await chatStore.continueDiffWithAnnotation(annotationToSend)
   } catch (err) {
     console.error('continueDiffWithAnnotation failed:', err)
-  } finally {
-    isSendingContinue = false
   }
 }
 
 // 保存 diff（点击按钮触发）
 async function handleAcceptDiff(tool: ToolUsage) {
   const diffIds = getDiffIds(tool)
-  // 即使 diffIds 为空，如果工具在 requiredDiffToolIds 中，仍需要处理
-  // 否则会导致批注丢失和对话无法继续
-  if (diffIds.length === 0 && !requiredDiffToolIds.value.has(tool.id)) {
-    return
-  }
-  if (diffLoadingIds.value.has(tool.id)) {
-    return
-  }
-  // 使用 isDiffProcessed 检查，支持多文件工具的重复处理
-  if (isDiffProcessed(tool)) {
-    return
-  }
-
-  // 【关键】立即标记用户已开始处理 diff
-  // 这会阻止后端发送的 toolIteration 重新设置 pendingDiffToolIds
-  // 从而避免按钮重新显示的问题
-  chatStore.markDiffProcessingStarted()
+  if (diffIds.length === 0 && !requiredDiffToolIds.value.has(tool.id)) return
+  if (diffLoadingIds.value.has(tool.id)) return
+  if (isDiffProcessed(tool)) return
 
   diffLoadingIds.value.add(tool.id)
   try {
-    // 第一个操作携带批注
     const isFirst = diffLoadingIds.value.size === 1 && processedDiffTools.value.size === 0
     const annotation = isFirst ? chatStore.inputValue.trim() : ''
 
     if (isFirst && annotation) {
       chatStore.setInputValue('')
-      // 即使没有 diffId 可调用，也要保存批注以便后续发送
       firstDiffAnnotation = annotation
     }
 
-    // 调用后端 API 执行保存（如果有 diffId）
     let isFirstDiff = true
     for (const diffId of diffIds) {
       const result = await acceptDiff(diffId, isFirstDiff ? annotation : undefined)
@@ -519,65 +377,39 @@ async function handleAcceptDiff(tool: ToolUsage) {
       isFirstDiff = false
     }
 
-    // 更新状态并检查是否继续对话
     await markDiffAsAccepted(tool)
   } finally {
     diffLoadingIds.value.delete(tool.id)
   }
 }
 
-/**
- * 标记工具为已拒绝，并检查是否需要继续对话
- */
+// 标记工具为已拒绝，并检查是否需要继续对话
 async function markDiffAsRejected(tool: ToolUsage): Promise<void> {
   const paths = getToolFilePaths(tool)
   for (const path of paths) {
     pendingDiffMap.value.delete(path)
   }
-
-  // 记录已处理
-  // 注意：后端在 StreamAccumulator 中统一生成工具 ID，
-  // 前端工具 ID 与后端 pendingDiffToolIds 应该一致，无需路径匹配
-  processedDiffTools.value.set(tool.id, 'reject')
-  processedDiffTools.value = new Map(processedDiffTools.value)
-
+  chatStore.markDiffToolProcessed(tool.id, 'reject')
   await checkAndContinueConversation()
 }
 
 // 拒绝 diff（点击按钮触发）
 async function handleRejectDiff(tool: ToolUsage) {
   const diffIds = getDiffIds(tool)
-  // 即使 diffIds 为空，如果工具在 requiredDiffToolIds 中，仍需要处理
-  // 否则会导致批注丢失和对话无法继续
-  if (diffIds.length === 0 && !requiredDiffToolIds.value.has(tool.id)) {
-    return
-  }
-  if (diffLoadingIds.value.has(tool.id)) {
-    return
-  }
-  // 使用 isDiffProcessed 检查，支持多文件工具的重复处理
-  if (isDiffProcessed(tool)) {
-    return
-  }
-
-  // 【关键】立即标记用户已开始处理 diff
-  // 这会阻止后端发送的 toolIteration 重新设置 pendingDiffToolIds
-  // 从而避免按钮重新显示的问题
-  chatStore.markDiffProcessingStarted()
+  if (diffIds.length === 0 && !requiredDiffToolIds.value.has(tool.id)) return
+  if (diffLoadingIds.value.has(tool.id)) return
+  if (isDiffProcessed(tool)) return
 
   diffLoadingIds.value.add(tool.id)
   try {
-    // 第一个操作携带批注（与 handleAcceptDiff 逻辑一致）
     const isFirst = diffLoadingIds.value.size === 1 && processedDiffTools.value.size === 0
     const annotation = isFirst ? chatStore.inputValue.trim() : ''
 
     if (isFirst && annotation) {
       chatStore.setInputValue('')
-      // 即使没有 diffId 可调用，也要保存批注以便后续发送
       firstDiffAnnotation = annotation
     }
 
-    // 调用后端 API 执行拒绝（如果有 diffId）
     let isFirstDiff = true
     for (const diffId of diffIds) {
       const result = await rejectDiff(diffId, isFirstDiff ? annotation : undefined)
@@ -587,7 +419,6 @@ async function handleRejectDiff(tool: ToolUsage) {
       isFirstDiff = false
     }
 
-    // 更新状态并检查是否继续对话
     await markDiffAsRejected(tool)
   } finally {
     diffLoadingIds.value.delete(tool.id)
@@ -615,42 +446,25 @@ function shouldPollDiffs(): boolean {
   return enhancedTools.value.some(tool => {
     if (tool.name !== 'apply_diff' && tool.name !== 'write_file') return false
 
-    // 如果工具已被处理，不需要为它轮询
     if (processedDiffTools.value.has(tool.id)) return false
-
-    // 【关键】只有当工具未被处理时，才考虑轮询
-    // isDiffProcessingStarted 只阻止已处理工具的轮询更新，不阻止新工具
-
-    // 工具正在执行中
     if (tool.status === 'running' || tool.status === 'pending') return true
 
-    // 工具执行完成但有 pendingDiffId（表示有待确认的 diff）
-    // 这种情况下也需要轮询，以便 pendingDiffMap 能获取到最新数据
-    // 【关键修复】只检查 pendingDiffId 是否存在，不再要求 status === 'pending'
-    // 后端可能只返回 pendingDiffId 而没有设置 status
+    // 检查是否有 pendingDiffId
     const resultData = (tool.result as any)?.data
-    if (resultData?.pendingDiffId) {
-      return true
-    }
-    // 对于 write_file，检查 results 中是否有 pendingDiffId
+    if (resultData?.pendingDiffId) return true
     if (tool.name === 'write_file' && resultData?.results) {
       for (const r of resultData.results) {
-        if (r.pendingDiffId) {
-          return true
-        }
+        if (r.pendingDiffId) return true
       }
     }
-
     return false
   })
 }
 
-// 开始轮询 pending diffs
 async function startDiffPolling() {
   if (diffPollTimer) return
 
   const checkPending = async () => {
-    // 使用统一的条件检查
     if (!shouldPollDiffs()) {
       stopDiffPolling()
       return
@@ -659,33 +473,20 @@ async function startDiffPolling() {
     try {
       const diffs = await getPendingDiffs()
 
-      // 构建新的 pendingDiffMap
-      // 如果 isDiffProcessingStarted 为 true，需要过滤掉已处理工具的路径
-      // 但仍然更新新工具的路径
       const newMap = new Map<string, string>()
 
-      if (isDiffProcessingStarted.value) {
-        // 用户正在处理，需要过滤已处理工具的路径
-        // 获取已处理工具的所有路径
-        const processedPaths = new Set<string>()
-        for (const tool of enhancedTools.value) {
-          if (processedDiffTools.value.has(tool.id)) {
-            const paths = getToolFilePaths(tool)
-            for (const path of paths) {
-              processedPaths.add(path)
-            }
+      // 过滤掉已处理工具的路径
+      const processedPaths = new Set<string>()
+      for (const tool of enhancedTools.value) {
+        if (processedDiffTools.value.has(tool.id)) {
+          for (const path of getToolFilePaths(tool)) {
+            processedPaths.add(path)
           }
         }
+      }
 
-        // 只添加不在已处理路径中的 diff
-        for (const diff of diffs) {
-          if (!processedPaths.has(diff.filePath)) {
-            newMap.set(diff.filePath, diff.id)
-          }
-        }
-      } else {
-        // 用户未在处理，正常更新所有
-        for (const diff of diffs) {
+      for (const diff of diffs) {
+        if (!processedPaths.has(diff.filePath)) {
           newMap.set(diff.filePath, diff.id)
         }
       }
@@ -731,9 +532,6 @@ onMounted(() => {
       })
 
       if (tool && !processedDiffTools.value.has(tool.id)) {
-        // 【关键】立即标记用户已开始处理 diff
-        chatStore.markDiffProcessingStarted()
-        // 直接更新状态，无需调用 API（后端 saveListener 已确认文件已保存）
         markDiffAsAccepted(tool)
       }
     }
@@ -1149,11 +947,8 @@ function renderToolContent(tool: ToolUsage) {
         <component :is="() => renderToolContent(tool)" />
       </div>
 
-      <!-- apply_diff 底部操作按钮 -->
+      <!-- apply_diff/write_file 底部操作按钮 -->
       <div v-if="shouldShowDiffArea(tool)" class="diff-action-footer">
-        <!-- 未处理状态：显示保存/拒绝按钮 -->
-        <!-- 只检查当前工具是否已处理，不使用全局的 isDiffProcessingStarted -->
-        <!-- isDiffProcessingStarted 的保护在 enhancedTools 和轮询逻辑中实现 -->
         <template v-if="!isDiffProcessed(tool)">
           <button
             class="diff-action-btn accept"
