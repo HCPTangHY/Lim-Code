@@ -200,13 +200,12 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
     return false
   }
 
-  // 【关键检查】用户已开始处理 diff 时，不显示按钮
-  // isDiffProcessingStarted 在用户点击保存/拒绝按钮时立即设置为 true
-  // 这解决了时序问题：用户点击按钮后，后端 toolIteration 到达时不应重新显示按钮
-  // 注意：使用 storeToRefs 后，需要访问 .value
-  if (isDiffProcessingStarted.value) {
-    return false
-  }
+  // 【注意】不在这里检查 isDiffProcessingStarted
+  // isDiffProcessingStarted 的保护已在其他地方实现：
+  // 1. shouldPollDiffs() - 阻止轮询更新 pendingDiffMap
+  // 2. 轮询回调 - 再次检查防止竞态
+  // 3. enhancedTools computed - 阻止将工具状态设为 pending
+  // 如果在这里检查，会阻止所有新工具的按钮显示，而不仅仅是当前正在处理的工具
 
   // 【关键检查】错误状态的工具不显示按钮
   // diff 应用失败时没有 pending diff 需要确认
@@ -1092,8 +1091,9 @@ function renderToolContent(tool: ToolUsage) {
       <!-- apply_diff 底部操作按钮 -->
       <div v-if="shouldShowDiffArea(tool)" class="diff-action-footer">
         <!-- 未处理状态：显示保存/拒绝按钮 -->
-        <!-- 关键：模板中直接检查 isDiffProcessingStarted 确保响应式更新，防止按钮重新显示 -->
-        <template v-if="!isDiffProcessed(tool) && !isDiffProcessingStarted">
+        <!-- 只检查当前工具是否已处理，不使用全局的 isDiffProcessingStarted -->
+        <!-- isDiffProcessingStarted 的保护在 enhancedTools 和轮询逻辑中实现 -->
+        <template v-if="!isDiffProcessed(tool)">
           <button
             class="diff-action-btn accept"
             :disabled="isDiffLoading(tool.id)"
