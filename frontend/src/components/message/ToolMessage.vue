@@ -65,26 +65,57 @@ const enhancedTools = computed<ToolUsage[]>(() => {
 
       // 关键修复：如果工具需要确认，保持 pending 状态
       // 同时检查 pendingDiffMap 和 chatStore.pendingDiffToolIds（后者作为回退）
-      // 【重要】用户已开始处理 diff 时，不再将状态设为 pending
-      if ((tool.name === 'apply_diff' || tool.name === 'write_file') && status !== 'error' && !isDiffProcessingStarted.value) {
-        let hasPending = false
+      //
+      // 【重要】isDiffProcessingStarted 检查逻辑：
+      // - 对于新工具（不在 processedDiffTools 中）：始终检查 pending 状态
+      // - 对于已处理的工具：如果用户正在处理，跳过检查（防止状态回退到 pending）
+      // 这样可以：
+      // 1. 新工具正常显示 pending 状态和按钮
+      // 2. 已处理的工具不会因为轮询数据而状态回退
+      if ((tool.name === 'apply_diff' || tool.name === 'write_file') && status !== 'error') {
+        // 只有当工具已被处理且用户正在处理时，才跳过 pending 检查
+        const isAlreadyProcessed = processedDiffTools.value.has(tool.id)
+        const skipPendingCheck = isAlreadyProcessed && isDiffProcessingStarted.value
 
-        // 检查 pendingDiffMap（轮询获取）
-        const paths = getToolFilePaths(tool)
-        for (const path of paths) {
-          if (pendingDiffMap.value.has(path)) {
-            hasPending = true
-            break
+        if (!skipPendingCheck) {
+          let hasPending = false
+
+          // 检查 pendingDiffMap（轮询获取）
+          const paths = getToolFilePaths(tool)
+          for (const path of paths) {
+            if (pendingDiffMap.value.has(path)) {
+              hasPending = true
+              break
+            }
           }
-        }
 
-        // 回退：检查后端的 pendingDiffToolIds（解决轮询返回空但后端确实有 pending 的情况）
-        if (!hasPending && chatStore.pendingDiffToolIds.includes(tool.id)) {
-          hasPending = true
-        }
+          // 回退 1：检查后端的 pendingDiffToolIds（解决轮询返回空但后端确实有 pending 的情况）
+          if (!hasPending && chatStore.pendingDiffToolIds.includes(tool.id)) {
+            hasPending = true
+          }
 
-        if (hasPending) {
-          status = 'pending'
+          // 回退 2：检查工具结果中的 pendingDiffId
+          // 【关键修复】如果轮询还没开始或后端还没发送 pendingDiffToolIds，
+          // 但工具结果中有 pendingDiffId，说明有待确认的 diff
+          if (!hasPending) {
+            const resultData = (response as any)?.data
+            if (resultData?.pendingDiffId) {
+              hasPending = true
+            }
+            // 对于 write_file，检查 results 中的 pendingDiffId
+            if (!hasPending && tool.name === 'write_file' && resultData?.results) {
+              for (const r of resultData.results) {
+                if (r.pendingDiffId) {
+                  hasPending = true
+                  break
+                }
+              }
+            }
+          }
+
+          if (hasPending) {
+            status = 'pending'
+          }
         }
       }
 
@@ -238,16 +269,17 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
     }
   }
 
-  // 检查 result 中是否有 pending 状态
+  // 检查 result 中是否有 pendingDiffId
+  // 【关键修复】只检查 pendingDiffId 是否存在，不再要求 status === 'pending'
   const resultData = (tool.result as any)?.data
-  if (resultData?.status === 'pending' && resultData?.pendingDiffId) {
+  if (resultData?.pendingDiffId) {
     return true
   }
 
-  // 对于 write_file，检查 results 中是否有任何 pending
+  // 对于 write_file，检查 results 中是否有 pendingDiffId
   if (tool.name === 'write_file' && resultData?.results) {
     for (const r of resultData.results) {
-      if (r.status === 'pending') {
+      if (r.pendingDiffId) {
         return true
       }
     }
@@ -323,16 +355,14 @@ function getDiffDecision(toolId: string): 'accept' | 'reject' | undefined {
  * - 前端发送 continueWithAnnotation
  * - 后端同时也在处理，发送 toolIteration
  * - 两条并发请求
+ *
+ * 【注意】不再检查 pendingDiffMap.size
+ * 原因：轮询可能在用户点击保存后仍返回旧数据，导致 pendingDiffMap 不为空
+ * 这会阻止对话继续。我们只需要检查 requiredDiffToolIds 是否都已处理即可。
  */
 function areAllDiffsProcessed(): boolean {
   // 必须有已处理的工具
   if (processedDiffTools.value.size === 0) {
-    return false
-  }
-
-  // 检查是否还有未处理的 pending diff（通过 pendingDiffMap 轮询获取）
-  // 如果还有 pending diff，不允许继续
-  if (pendingDiffMap.value.size > 0) {
     return false
   }
 
@@ -355,12 +385,22 @@ function areAllDiffsProcessed(): boolean {
 
 /**
  * 检查是否还有未处理的 diff
+ *
+ * 用于显示"等待其他 diff"提示
+ * 基于 requiredDiffToolIds 判断，不再依赖 pendingDiffMap（避免轮询竞态）
  */
 function hasRemainingDiffs(): boolean {
   // 如果没有已处理的工具，不显示等待提示
   if (processedDiffTools.value.size === 0) return false
-  // 如果 pendingDiffMap 还有内容，说明还有未处理的
-  return pendingDiffMap.value.size > 0
+  // 如果 requiredDiffToolIds 为空，说明后端还没发送，不显示等待提示
+  if (requiredDiffToolIds.value.size === 0) return false
+  // 检查是否有未处理的工具
+  for (const id of requiredDiffToolIds.value) {
+    if (!processedDiffTools.value.has(id)) {
+      return true
+    }
+  }
+  return false
 }
 
 /**
@@ -557,12 +597,6 @@ async function handleRejectDiff(tool: ToolUsage) {
 // 检查是否需要轮询 pending diffs
 // 当有工具正在执行，或工具执行完成但有未处理的 pending diff 时，需要轮询
 function shouldPollDiffs(): boolean {
-  // 【关键】用户已开始处理 diff 时，停止轮询
-  // 防止轮询返回的数据覆盖用户操作，导致按钮重新出现
-  if (isDiffProcessingStarted.value) {
-    return false
-  }
-
   // 如果所有 diff 都已处理完成，停止轮询
   if (processedDiffTools.value.size > 0 && areAllDiffsProcessed()) {
     return false
@@ -577,25 +611,32 @@ function shouldPollDiffs(): boolean {
     }
   }
 
+  // 检查是否有未处理的工具需要轮询
   return enhancedTools.value.some(tool => {
     if (tool.name !== 'apply_diff' && tool.name !== 'write_file') return false
+
+    // 如果工具已被处理，不需要为它轮询
+    if (processedDiffTools.value.has(tool.id)) return false
+
+    // 【关键】只有当工具未被处理时，才考虑轮询
+    // isDiffProcessingStarted 只阻止已处理工具的轮询更新，不阻止新工具
 
     // 工具正在执行中
     if (tool.status === 'running' || tool.status === 'pending') return true
 
-    // 工具执行完成但有 pending diff（尚未被用户处理）
+    // 工具执行完成但有 pendingDiffId（表示有待确认的 diff）
     // 这种情况下也需要轮询，以便 pendingDiffMap 能获取到最新数据
-    if (!processedDiffTools.value.has(tool.id)) {
-      const resultData = (tool.result as any)?.data
-      if (resultData?.status === 'pending' && resultData?.pendingDiffId) {
-        return true
-      }
-      // 对于 write_file，检查 results 中是否有 pending
-      if (tool.name === 'write_file' && resultData?.results) {
-        for (const r of resultData.results) {
-          if (r.status === 'pending') {
-            return true
-          }
+    // 【关键修复】只检查 pendingDiffId 是否存在，不再要求 status === 'pending'
+    // 后端可能只返回 pendingDiffId 而没有设置 status
+    const resultData = (tool.result as any)?.data
+    if (resultData?.pendingDiffId) {
+      return true
+    }
+    // 对于 write_file，检查 results 中是否有 pendingDiffId
+    if (tool.name === 'write_file' && resultData?.results) {
+      for (const r of resultData.results) {
+        if (r.pendingDiffId) {
+          return true
         }
       }
     }
@@ -618,17 +659,37 @@ async function startDiffPolling() {
     try {
       const diffs = await getPendingDiffs()
 
-      // 【关键】再次检查 isDiffProcessingStarted，防止竞态条件
-      // 场景：shouldPollDiffs() 检查后、getPendingDiffs() 返回前，用户点击了保存
-      // 此时 isDiffProcessingStarted 已变为 true，不应再更新 pendingDiffMap
+      // 构建新的 pendingDiffMap
+      // 如果 isDiffProcessingStarted 为 true，需要过滤掉已处理工具的路径
+      // 但仍然更新新工具的路径
+      const newMap = new Map<string, string>()
+
       if (isDiffProcessingStarted.value) {
-        return
+        // 用户正在处理，需要过滤已处理工具的路径
+        // 获取已处理工具的所有路径
+        const processedPaths = new Set<string>()
+        for (const tool of enhancedTools.value) {
+          if (processedDiffTools.value.has(tool.id)) {
+            const paths = getToolFilePaths(tool)
+            for (const path of paths) {
+              processedPaths.add(path)
+            }
+          }
+        }
+
+        // 只添加不在已处理路径中的 diff
+        for (const diff of diffs) {
+          if (!processedPaths.has(diff.filePath)) {
+            newMap.set(diff.filePath, diff.id)
+          }
+        }
+      } else {
+        // 用户未在处理，正常更新所有
+        for (const diff of diffs) {
+          newMap.set(diff.filePath, diff.id)
+        }
       }
 
-      const newMap = new Map<string, string>()
-      for (const diff of diffs) {
-        newMap.set(diff.filePath, diff.id)
-      }
       pendingDiffMap.value = newMap
     } catch (err) {
       console.error('Failed to poll pending diffs:', err)
