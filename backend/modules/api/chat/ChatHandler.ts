@@ -52,6 +52,137 @@ import type {
 /** 默认最大工具调用循环次数（当设置管理器不可用时使用） */
 const DEFAULT_MAX_TOOL_ITERATIONS = 20;
 
+/** 文件修改工具名称列表 - 这些工具执行后需要暂停 AI 循环等待用户确认 */
+const FILE_MODIFICATION_TOOLS = ['apply_diff', 'write_file'] as const;
+
+/**
+ * 检查工具执行结果中是否包含需要用户确认的文件修改工具
+ *
+ * 【重要】此函数决定后端是否暂停等待用户确认 diff 并发送批注
+ *
+============================================================================
+ *
+ * 这个函数涉及前后端复杂的时序交互，曾出现两个严重 bug：
+ *
+ * ============================================================================
+ * 【问题一：两条并发 AI 请求】
+ * ============================================================================
+ *
+ * 问题表现：用户点击保存/拒绝按钮后，发送了两条 `continueWithAnnotation` 请求
+ *
+ * 根本原因：前端有两个触发点可以发送请求
+ *   1. 用户点击按钮 → `markDiffAsAccepted/Rejected` → `checkAndContinueConversation`
+ *   2. 后端发送 `toolIteration` → `watch(requiredDiffToolIds)` → `checkAndContinueConversation`
+ *
+ * 时序问题：
+ *   - 用户快速点击按钮时，`requiredDiffToolIds` 还是空的（后端还没发送 toolIteration）
+ *   - 旧的 `areAllDiffsProcessed()` 在 `requiredDiffToolIds` 为空时返回 true
+ *   - 导致按钮点击触发一次，后端 toolIteration 到达后又触发一次
+ *
+ * 前端修复：
+ *   - `areAllDiffsProcessed()` 必须等待 `requiredDiffToolIds` 被设置后才返回 true
+ *   - 添加 `isSendingContinue` 防重标志
+ *   - 前后端工具 ID 可能不匹配（前端生成 vs 后端 fc_xxx），需要通过文件路径匹配
+ *
+ * ============================================================================
+ * 【问题二：批注丢失】
+ * ============================================================================
+ *
+ * 问题表现：用户点击拒绝按钮后，输入框中的批注没有被发送给 AI
+ *
+ * 根本原因：`apply_diff` 工具内部有 pending diff **阻塞等待**机制
+ *
+ * 【工具执行时序 - 关键！】
+ *   1. AI 调用 apply_diff 工具
+ *   2. 工具创建 pending diff，**阻塞等待**用户确认（保存/拒绝）
+ *   3. 用户点击拒绝按钮 → `rejectDiff` API 被调用
+ *   4. `rejectDiff` 处理 pending diff，设置结果为 `{success: false, data: {status: "rejected"}}`
+ *   5. 工具等待结束，返回这个"拒绝"结果
+ *   6. 后端调用**此函数**检查是否需要等待批注
+ *
+ * 【错误的旧逻辑】
+ *   旧代码检查 `success === false` 就认为是执行错误，返回 false，不等待批注。
+ *   但 `success: false` + `data.status: "rejected"` 实际上是**用户主动拒绝**，
+ *   不是执行错误！用户的批注仍然需要发送给 AI。
+ *
+ * 【正确的新逻辑】
+ *   - 只检查 `error` 字段是否存在（真正的执行错误，如文件不存在、权限问题）
+ *   - 不检查 `success === false`（用户拒绝 diff 时 success 为 false，但需要发送批注）
+ *   - `rejected === true` 是工具**确认阶段**的拒绝（工具还没执行），这种情况不需要批注
+ *
+ * 【两种"拒绝"的区别】
+ *   1. `result.rejected === true`：工具确认阶段拒绝（工具未执行）→ 不需要批注
+ *   2. `result.data.status === "rejected"`：diff 预览阶段拒绝（工具已执行）→ 需要批注
+ *
+ * ============================================================================
+ *
+ * @param toolResults 工具执行结果列表
+ * @returns 是否有需要用户确认的文件修改（true = 暂停等待批注）
+ */
+function hasFileModificationToolInResults(
+    toolResults: Array<{ name: string; result?: { success?: boolean; rejected?: boolean; error?: string; data?: { pendingDiffId?: string; status?: string } }; [key: string]: unknown }>
+): boolean {
+    return toolResults.some(r => {
+        // 必须是文件修改工具
+        if (!(FILE_MODIFICATION_TOOLS as readonly string[]).includes(r.name)) {
+            return false;
+        }
+        // 排除工具确认阶段的拒绝（工具未执行，rejected === true）
+        if ((r.result as any)?.rejected) {
+            return false;
+        }
+        // 排除真正的执行错误（有 error 字段），让 AI 处理错误
+        // 【关键】不检查 success === false！
+        // 因为用户拒绝 diff 时 success 为 false，但 data.status 为 "rejected"
+        // 这种情况仍需要等待批注
+        const result = r.result as any;
+        if (result?.error) {
+            return false;
+        }
+        // 文件修改工具执行完成（无论成功还是被用户拒绝），需要等待用户批注
+        return true;
+    });
+}
+
+/**
+ * 从工具执行结果中提取需要用户确认的文件修改工具 ID 列表
+ *
+ * 【重要】此函数返回的 ID 会发送给前端作为 pendingDiffToolIds
+ * 前端根据这个列表显示保存/拒绝按钮
+ *
+ * 【与 hasFileModificationToolInResults 保持一致】
+ * 两个函数的过滤逻辑必须完全一致，否则会导致：
+ * - hasFileModificationToolInResults 返回 true（后端等待）
+ * - 但 getFileModificationToolIds 返回空（前端不显示按钮）
+ * - 死锁：后端等待，但用户无法操作
+ *
+ * @param toolResults 工具执行结果列表
+ * @returns 需要用户确认的文件修改工具 ID 列表
+ */
+function getFileModificationToolIds(
+    toolResults: Array<{ id?: string; name: string; result?: { success?: boolean; rejected?: boolean; error?: string; data?: { pendingDiffId?: string; status?: string } }; [key: string]: unknown }>
+): string[] {
+    return toolResults
+        .filter(r => {
+            // 必须是文件修改工具且有 ID
+            if (!(FILE_MODIFICATION_TOOLS as readonly string[]).includes(r.name) || !r.id) {
+                return false;
+            }
+            // 排除被用户拒绝执行的工具（在工具确认阶段点击了拒绝）
+            if ((r.result as any)?.rejected) {
+                return false;
+            }
+            // 排除真正的执行错误（与 hasFileModificationToolInResults 一致）
+            const result = r.result as any;
+            if (result?.error) {
+                return false;
+            }
+            // 文件修改工具执行完成（无论成功还是被用户拒绝），返回其 ID
+            return true;
+        })
+        .map(r => r.id as string);
+}
+
 /**
  * 对话回合信息
  *
@@ -457,7 +588,7 @@ export class ChatHandler {
                 // 获取对话历史（应用上下文裁剪）
                 const historyOptions = this.buildHistoryOptions(config);
                 const { history, trimStartIndex } = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions);
-                
+
                 // 每次迭代都刷新动态系统提示词（包含 DIAGNOSTICS 等实时信息）
                 // 首条消息时使用 refreshAndGetPrompt 强制刷新缓存
                 const dynamicSystemPrompt = (isFirstMessage && iteration === 1)
@@ -665,10 +796,10 @@ export class ChatHandler {
                     parts: functionResponseParts,
                     isFunctionResponse: true
                 });
-                
+
                 // 计算工具响应消息的 token 数
                 await this.preCountUserMessageTokens(conversationId, config.type);
-                
+
                 // 检查是否有工具被取消
                 const hasCancelled = toolResults.some(r => (r.result as any).cancelled);
                 if (hasCancelled) {
@@ -682,7 +813,24 @@ export class ChatHandler {
                     };
                     return;
                 }
-                
+
+                // 检查是否有文件修改工具执行，需要暂停循环等待用户确认
+                if (hasFileModificationToolInResults(toolResults)) {
+                    const diffToolIds = getFileModificationToolIds(toolResults);
+                    // 注意：functionResponse 已在上面添加到历史
+                    // 这里只需 yield toolIteration，后端 continueWithAnnotation 会继续对话
+                    yield {
+                        conversationId,
+                        content: finalContent,
+                        toolIteration: true as const,
+                        toolResults,
+                        checkpoints,
+                        needAnnotation: true as const,
+                        pendingDiffToolIds: diffToolIds
+                    };
+                    return;
+                }
+
                 // 发送 toolIteration 信号（包含工具执行结果和检查点）
                 yield {
                     conversationId,
@@ -691,10 +839,10 @@ export class ChatHandler {
                     toolResults,
                     checkpoints
                 };
-                
+
                 // 继续循环，让 AI 处理函数结果
             }
-            
+
             // 达到最大迭代次数
             yield {
                 conversationId,
@@ -796,14 +944,19 @@ export class ChatHandler {
             args: Record<string, unknown>;
             id: string;
         }> = [];
-        
+
         for (const part of content.parts) {
             // Function Call 模式
             if (part.functionCall) {
+                // 如果 AI 没有返回 ID，生成一个并写回 content.parts
+                // 这样前端从 content 中提取工具时能获取到相同的 ID
+                if (!part.functionCall.id) {
+                    part.functionCall.id = generateToolCallId();
+                }
                 calls.push({
                     name: part.functionCall.name,
                     args: part.functionCall.args,
-                    id: part.functionCall.id || generateToolCallId()
+                    id: part.functionCall.id
                 });
             }
             
@@ -1316,7 +1469,7 @@ export class ChatHandler {
         ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamCheckpointsData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
     > {
         try {
-            const { conversationId, configId, toolResponses } = request;
+            const { conversationId, configId, toolResponses, annotation } = request;
             
             // 1. 确保对话存在
             await this.ensureConversation(conversationId);
@@ -1448,280 +1601,81 @@ export class ChatHandler {
             const allResponseParts = [...confirmedResult.responseParts, ...rejectedParts];
             const allCheckpoints = confirmedResult.checkpoints;
             
-            // 8. 发送工具执行结果
-            yield {
-                conversationId,
-                content: lastMessage,
-                toolIteration: true as const,
-                toolResults: allToolResults,
-                checkpoints: allCheckpoints
-            };
-            
-            // 9. 将函数响应添加到历史
+            // 8. 将函数响应添加到历史
             // 对于 XML/JSON 模式，如果有多模态附件，将其放在 parts 前面
             const confirmFunctionResponseParts = confirmedResult.multimodalAttachments && confirmedResult.multimodalAttachments.length > 0
                 ? [...confirmedResult.multimodalAttachments, ...allResponseParts]
                 : allResponseParts;
-                
+
             await this.conversationManager.addContent(conversationId, {
                 role: 'user',
                 parts: confirmFunctionResponseParts,
                 isFunctionResponse: true
             });
-            
+
             // 计算工具响应消息的 token 数
             await this.preCountUserMessageTokens(conversationId, config.type);
 
-            // 9.5 如果有用户批注，添加为新的用户消息
-            if (request.annotation && request.annotation.trim()) {
+            // 9. 检查是否有文件修改工具执行
+            const hasDiffTools = hasFileModificationToolInResults(allToolResults);
+            const diffToolIds = getFileModificationToolIds(allToolResults);
+
+            if (hasDiffTools) {
+                // 有 diff 工具，需要等待用户确认
+                // 【重要】如果有批注，必须通过 pendingAnnotation 返回给前端！
+                // 否则批注会丢失（前端无法清空输入框、显示用户消息）
+                // 前端会在 diff 确认时将 pendingAnnotation 与 diff 批注合并后发送
+                const pendingAnnotation = annotation && annotation.trim() ? annotation.trim() : undefined;
+                yield {
+                    conversationId,
+                    content: lastMessage,
+                    toolIteration: true as const,
+                    toolResults: allToolResults,
+                    checkpoints: allCheckpoints,
+                    needAnnotation: true as const,
+                    pendingDiffToolIds: diffToolIds,
+                    pendingAnnotation
+                };
+                // 返回，等待前端调用 continueWithAnnotation
+                return;
+            }
+
+            // 没有 diff 工具，检查是否有批注
+            const hasAnnotation = annotation && annotation.trim();
+            if (hasAnnotation) {
+                // 有批注，添加为用户消息
                 await this.conversationManager.addContent(conversationId, {
                     role: 'user',
-                    parts: [{ text: request.annotation.trim() }]
+                    parts: [{ text: annotation.trim() }]
                 });
                 // 计算批注消息的 token 数
                 await this.preCountUserMessageTokens(conversationId, config.type);
             }
 
-            // 10. 继续 AI 对话（让 AI 处理工具结果）
-            // 工具调用循环
-            const maxToolIterations = this.getMaxToolIterations();
-            let iteration = 0;
-            // -1 表示无限制
-            while (maxToolIterations === -1 || iteration < maxToolIterations) {
-                iteration++;
-                
-                // 检查是否已取消
-                if (request.abortSignal?.aborted) {
-                    // 发送 cancelled 消息给前端，让前端正确清理状态
-                    yield {
-                        conversationId,
-                        cancelled: true as const
-                    } as any;
-                    return;
-                }
-                
-                // 获取对话历史（应用总结过滤和上下文阈值裁剪）
-                const historyOptions = this.buildHistoryOptions(config);
-                const updatedHistory = await this.getHistoryWithContextTrim(conversationId, config, historyOptions);
-                
-                // 每次迭代都刷新动态系统提示词（包含 DIAGNOSTICS 等实时信息）
-                const dynamicSystemPrompt = this.promptManager.getSystemPrompt(true);  // 强制刷新
-                
-                // 记录请求开始时间（用于计算响应持续时间）
-                const confirmRequestStartTime = Date.now();
-                
-                // 调用 AI
-                const response = await this.channelManager.generate({
-                    configId,
-                    history: updatedHistory,
-                    abortSignal: request.abortSignal,
-                    dynamicSystemPrompt
-                });
-                
-                // 处理响应
-                let finalContent: Content;
-                
-                if (this.isAsyncGenerator(response)) {
-                    const accumulator = new StreamAccumulator();
-                    // 设置请求开始时间，用于计算 responseDuration
-                    accumulator.setRequestStartTime(confirmRequestStartTime);
-                    accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'custom');
-                    let cancelled = false;
-                    let lastPartsLength = 0;
-                    
-                    try {
-                        for await (const chunk of response) {
-                            if (request.abortSignal?.aborted) {
-                                cancelled = true;
-                                break;
-                            }
-                            accumulator.add(chunk);
-                            
-                            const currentContent = accumulator.getContent();
-                            const currentParts = currentContent.parts;
-                            const newDelta = currentParts.slice(lastPartsLength);
-                            lastPartsLength = currentParts.length;
-                            
-                            // 添加 thinkingStartTime 供前端实时显示
-                            const confirmIterProcessedChunk: typeof chunk & { thinkingStartTime?: number } = {
-                                ...chunk,
-                                delta: newDelta.length > 0 ? newDelta : chunk.delta
-                            };
-                            
-                            const confirmIterThinkingStartTime = currentContent.thinkingStartTime;
-                            if (confirmIterThinkingStartTime !== undefined) {
-                                confirmIterProcessedChunk.thinkingStartTime = confirmIterThinkingStartTime;
-                            }
-                            
-                            yield { conversationId, chunk: confirmIterProcessedChunk };
-                        }
-                    } catch (err) {
-                        // 如果是取消错误，设置 cancelled 为 true 并继续执行后续保存逻辑
-                        if (request.abortSignal?.aborted || (err instanceof ChannelError && err.type === ErrorType.CANCELLED_ERROR)) {
-                            cancelled = true;
-                        } else {
-                            throw err;
-                        }
-                    }
-                    
-                    if (cancelled) {
-                        const partialContent = accumulator.getContent();
-                        if (partialContent.parts.length > 0) {
-                            await this.conversationManager.addContent(conversationId, partialContent);
-                            // yield cancelled 消息，包含 partialContent 以便前端更新计时信息
-                            yield {
-                                conversationId,
-                                cancelled: true as const,
-                                content: partialContent
-                            } as any;
-                        } else {
-                            // 即使没有内容也要发送取消信号
-                            yield {
-                                conversationId,
-                                cancelled: true as const
-                            } as any;
-                        }
-                        return;
-                    }
-                    
-                    finalContent = accumulator.getContent();
-                } else {
-                    finalContent = (response as GenerateResponse).content;
-                    // 添加响应持续时间
-                    finalContent.responseDuration = Date.now() - confirmRequestStartTime;
-                    finalContent.chunkCount = 1;
-                    yield {
-                        conversationId,
-                        chunk: {
-                            delta: finalContent.parts,
-                            done: true
-                        }
-                    };
-                }
-                
-                // 转换工具调用格式
-                this.convertXMLToolCallsToFunctionCalls(finalContent);
-                this.ensureFunctionCallIds(finalContent);
-                
-                // 保存响应
-                if (finalContent.parts.length > 0) {
-                    await this.conversationManager.addContent(conversationId, finalContent);
-                }
-                
-                // 检查是否有新的工具调用
-                const newFunctionCalls = this.extractFunctionCalls(finalContent);
-                
-                if (newFunctionCalls.length === 0) {
-                    // 没有工具调用，完成
-                    yield {
-                        conversationId,
-                        content: finalContent
-                    };
-                    return;
-                }
-                
-                // 检查新的工具调用是否需要确认
-                const newToolsNeedingConfirmation = this.getToolsNeedingConfirmation(newFunctionCalls);
-                
-                if (newToolsNeedingConfirmation.length > 0) {
-                    // 需要确认
-                    const pendingToolCalls: PendingToolCall[] = newToolsNeedingConfirmation.map(call => ({
-                        id: call.id,
-                        name: call.name,
-                        args: call.args
-                    }));
-                    
-                    yield {
-                        conversationId,
-                        pendingToolCalls,
-                        content: finalContent,
-                        awaitingConfirmation: true as const
-                    };
-                    return;
-                }
-                
-                // 不需要确认，直接执行
-                const newHistory = await this.conversationManager.getHistoryRef(conversationId);
-                const newMessageIndex = newHistory.length - 1;
-                
-                // 工具执行前先发送计时信息（让前端立即显示）
-                yield {
-                    conversationId,
-                    content: finalContent,
-                    toolsExecuting: true as const,
-                    pendingToolCalls: newFunctionCalls.map(call => ({
-                        id: call.id,
-                        name: call.name,
-                        args: call.args
-                    }))
-                };
-                
-                const newExecutionResult = await this.executeFunctionCallsWithResults(
-                    newFunctionCalls,
-                    conversationId,
-                    newMessageIndex,
-                    config,
-                    request.abortSignal
-                );
-                
-                // 先将函数响应添加到历史（确保取消时也能保存）
-                // 对于 XML/JSON 模式，如果有多模态附件，将其放在 parts 前面
-                const newFunctionResponseParts = newExecutionResult.multimodalAttachments
-                    ? [...newExecutionResult.multimodalAttachments, ...newExecutionResult.responseParts]
-                    : newExecutionResult.responseParts;
-                
-                await this.conversationManager.addContent(conversationId, {
-                    role: 'user',
-                    parts: newFunctionResponseParts,
-                    isFunctionResponse: true
-                });
-                
-                // 计算工具响应消息的 token 数
-                await this.preCountUserMessageTokens(conversationId, config.type);
-                
-                // 检查是否有工具被取消
-                const confirmHasCancelled = newExecutionResult.toolResults.some(r => (r.result as any).cancelled);
-                if (confirmHasCancelled) {
-                    // 有工具被取消，发送最终的 toolIteration 后结束
-                    yield {
-                        conversationId,
-                        content: finalContent,
-                        toolIteration: true as const,
-                        toolResults: newExecutionResult.toolResults,
-                        checkpoints: newExecutionResult.checkpoints
-                    };
-                    return;
-                }
-                
-                yield {
-                    conversationId,
-                    content: finalContent,
-                    toolIteration: true as const,
-                    toolResults: newExecutionResult.toolResults,
-                    checkpoints: newExecutionResult.checkpoints
-                };
-            }
-            
-            // 达到最大迭代次数
+            // 发送工具执行结果（标记批注是否已使用，让前端知道是否需要显示用户消息）
             yield {
                 conversationId,
-                error: {
-                    code: 'MAX_TOOL_ITERATIONS',
-                    message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations })
-                }
+                content: lastMessage,
+                toolIteration: true as const,
+                toolResults: allToolResults,
+                checkpoints: allCheckpoints,
+                annotationUsed: hasAnnotation ? annotation!.trim() : undefined
             };
-            
+
+            // 直接继续 AI 对话
+            yield* this.continueToolLoop(conversationId, configId, config, request.abortSignal);
+            return;
+
         } catch (error) {
             // 检查是否是用户取消错误
             if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
-                // 用户取消，yield cancelled 消息
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
                 } as any;
                 return;
             }
-            
+
             // 检查是否是取消导致的错误（信号已中止）
             if (request.abortSignal?.aborted) {
                 yield {
@@ -1736,7 +1690,325 @@ export class ChatHandler {
             }
         }
     }
-    
+
+    /**
+     * 继续对话并带批注
+     *
+     * 工具确认执行完成后，前端调用此方法发送用户批注并继续 AI 对话
+     *
+     * @param request 批注请求数据
+     */
+    async *continueWithAnnotation(
+        request: import('./types').ContinueWithAnnotationRequestData
+    ): AsyncGenerator<
+        ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamCheckpointsData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
+    > {
+        try {
+            const { conversationId, configId, annotation } = request;
+
+            // 1. 确保对话存在
+            await this.ensureConversation(conversationId);
+
+            // 2. 验证配置
+            const config = await this.configManager.getConfig(configId);
+            if (!config) {
+                yield {
+                    conversationId,
+                    error: {
+                        code: 'CONFIG_NOT_FOUND',
+                        message: t('modules.api.chat.errors.configNotFound', { configId })
+                    }
+                };
+                return;
+            }
+
+            // 3. 如果有用户批注，添加为新的用户消息
+            // 注意：functionResponse 在 handleChatStream/handleRetryStream/handleEditAndRetryStream 中
+            // yield needAnnotation 之前已经被添加到历史，所以这里无需等待或检查
+            if (annotation && annotation.trim()) {
+                await this.conversationManager.addContent(conversationId, {
+                    role: 'user',
+                    parts: [{ text: annotation.trim() }]
+                });
+
+                // 计算批注消息的 token 数
+                await this.preCountUserMessageTokens(conversationId, config.type);
+            }
+
+            // 4. 继续 AI 对话（复用现有的工具调用循环逻辑）
+            yield* this.continueToolLoop(conversationId, configId, config, request.abortSignal);
+
+        } catch (error) {
+            // 检查是否是用户取消错误
+            if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
+            // 检查是否是取消导致的错误
+            if (request.abortSignal?.aborted) {
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+            } else {
+                yield {
+                    conversationId: request.conversationId,
+                    error: this.formatError(error)
+                };
+            }
+        }
+    }
+
+    /**
+     * 继续工具调用循环
+     *
+     * 抽取的公共方法，用于工具确认后继续 AI 对话
+     */
+    private async *continueToolLoop(
+        conversationId: string,
+        configId: string,
+        config: BaseChannelConfig,
+        abortSignal?: AbortSignal
+    ): AsyncGenerator<
+        ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamCheckpointsData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
+    > {
+        const maxToolIterations = this.getMaxToolIterations();
+        let iteration = 0;
+
+        while (maxToolIterations === -1 || iteration < maxToolIterations) {
+            iteration++;
+
+            // 检查是否已取消
+            if (abortSignal?.aborted) {
+                yield {
+                    conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
+            // 获取对话历史
+            const historyOptions = this.buildHistoryOptions(config);
+            const updatedHistory = await this.getHistoryWithContextTrim(conversationId, config, historyOptions);
+
+            // 刷新动态系统提示词
+            const dynamicSystemPrompt = this.promptManager.getSystemPrompt(true);
+
+            // 记录请求开始时间
+            const requestStartTime = Date.now();
+
+            // 调用 AI
+            const response = await this.channelManager.generate({
+                configId,
+                history: updatedHistory,
+                abortSignal,
+                dynamicSystemPrompt
+            });
+
+            // 处理响应
+            let finalContent: Content;
+
+            if (this.isAsyncGenerator(response)) {
+                const accumulator = new StreamAccumulator();
+                accumulator.setRequestStartTime(requestStartTime);
+                accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'custom');
+                let cancelled = false;
+                let lastPartsLength = 0;
+
+                try {
+                    for await (const chunk of response) {
+                        if (abortSignal?.aborted) {
+                            cancelled = true;
+                            break;
+                        }
+                        accumulator.add(chunk);
+
+                        const currentContent = accumulator.getContent();
+                        const currentParts = currentContent.parts;
+                        const newDelta = currentParts.slice(lastPartsLength);
+                        lastPartsLength = currentParts.length;
+
+                        const processedChunk: typeof chunk & { thinkingStartTime?: number } = {
+                            ...chunk,
+                            delta: newDelta.length > 0 ? newDelta : chunk.delta
+                        };
+
+                        const thinkingStartTime = currentContent.thinkingStartTime;
+                        if (thinkingStartTime !== undefined) {
+                            processedChunk.thinkingStartTime = thinkingStartTime;
+                        }
+
+                        yield { conversationId, chunk: processedChunk };
+                    }
+                } catch (err) {
+                    if (abortSignal?.aborted || (err instanceof ChannelError && err.type === ErrorType.CANCELLED_ERROR)) {
+                        cancelled = true;
+                    } else {
+                        throw err;
+                    }
+                }
+
+                if (cancelled) {
+                    const partialContent = accumulator.getContent();
+                    if (partialContent.parts.length > 0) {
+                        await this.conversationManager.addContent(conversationId, partialContent);
+                        yield {
+                            conversationId,
+                            cancelled: true as const,
+                            content: partialContent
+                        } as any;
+                    } else {
+                        yield {
+                            conversationId,
+                            cancelled: true as const
+                        } as any;
+                    }
+                    return;
+                }
+
+                finalContent = accumulator.getContent();
+            } else {
+                finalContent = (response as GenerateResponse).content;
+                finalContent.responseDuration = Date.now() - requestStartTime;
+                finalContent.chunkCount = 1;
+                yield {
+                    conversationId,
+                    chunk: {
+                        delta: finalContent.parts,
+                        done: true
+                    }
+                };
+            }
+
+            // 转换工具调用格式
+            this.convertXMLToolCallsToFunctionCalls(finalContent);
+            this.ensureFunctionCallIds(finalContent);
+
+            // 保存响应
+            if (finalContent.parts.length > 0) {
+                await this.conversationManager.addContent(conversationId, finalContent);
+            }
+
+            // 检查是否有新的工具调用
+            const functionCalls = this.extractFunctionCalls(finalContent);
+
+            if (functionCalls.length === 0) {
+                // 没有工具调用，完成
+                yield {
+                    conversationId,
+                    content: finalContent
+                };
+                return;
+            }
+
+            // 检查是否需要确认
+            const toolsNeedingConfirmation = this.getToolsNeedingConfirmation(functionCalls);
+
+            if (toolsNeedingConfirmation.length > 0) {
+                // 需要确认
+                const pendingToolCalls: PendingToolCall[] = toolsNeedingConfirmation.map(call => ({
+                    id: call.id,
+                    name: call.name,
+                    args: call.args
+                }));
+
+                yield {
+                    conversationId,
+                    pendingToolCalls,
+                    content: finalContent,
+                    awaitingConfirmation: true as const
+                };
+                return;
+            }
+
+            // 不需要确认，直接执行
+            const history = await this.conversationManager.getHistoryRef(conversationId);
+            const messageIndex = history.length - 1;
+
+            // 发送工具执行开始信号
+            yield {
+                conversationId,
+                content: finalContent,
+                toolsExecuting: true as const,
+                pendingToolCalls: functionCalls.map(call => ({
+                    id: call.id,
+                    name: call.name,
+                    args: call.args
+                }))
+            };
+
+            const executionResult = await this.executeFunctionCallsWithResults(
+                functionCalls,
+                conversationId,
+                messageIndex,
+                config,
+                abortSignal
+            );
+
+            // 将函数响应添加到历史
+            const functionResponseParts = executionResult.multimodalAttachments
+                ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
+                : executionResult.responseParts;
+
+            await this.conversationManager.addContent(conversationId, {
+                role: 'user',
+                parts: functionResponseParts,
+                isFunctionResponse: true
+            });
+
+            // 计算工具响应消息的 token 数
+            await this.preCountUserMessageTokens(conversationId, config.type);
+
+            // 检查是否有工具被取消
+            const hasCancelled = executionResult.toolResults.some(r => (r.result as any).cancelled);
+            if (hasCancelled) {
+                yield {
+                    conversationId,
+                    content: finalContent,
+                    toolIteration: true as const,
+                    toolResults: executionResult.toolResults,
+                    checkpoints: executionResult.checkpoints
+                };
+                return;
+            }
+
+            // 检查是否有文件修改工具执行，需要暂停循环等待用户确认
+            if (hasFileModificationToolInResults(executionResult.toolResults)) {
+                const loopDiffToolIds = getFileModificationToolIds(executionResult.toolResults);
+                yield {
+                    conversationId,
+                    content: finalContent,
+                    toolIteration: true as const,
+                    toolResults: executionResult.toolResults,
+                    checkpoints: executionResult.checkpoints,
+                    needAnnotation: true as const,
+                    pendingDiffToolIds: loopDiffToolIds
+                };
+                return;
+            }
+            yield {
+                conversationId,
+                content: finalContent,
+                toolIteration: true as const,
+                toolResults: executionResult.toolResults,
+                checkpoints: executionResult.checkpoints
+            };
+        }
+
+        // 达到最大迭代次数
+        yield {
+            conversationId,
+            error: {
+                code: 'MAX_TOOL_ITERATIONS',
+                message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations })
+            }
+        };
+    }
+
     /**
      * 检查是否是 AsyncGenerator
      */
@@ -2115,50 +2387,50 @@ export class ChatHandler {
         // 如果没有任何消息，直接返回空历史
         if (!hasEstimatedTokens) {
             const history = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
-            return { history, trimStartIndex: 0 };
+            return this.cleanHistoryStart(history, 0);
         }
-        
+
         // 检查是否启用上下文阈值检测
         if (!config.contextThresholdEnabled) {
             // 未启用阈值检测，直接返回从起始索引开始的历史
             if (effectiveStartIndex === 0) {
                 const history = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
-                return { history, trimStartIndex: 0 };
+                return this.cleanHistoryStart(history, 0);
             }
             const fullApiHistory = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
             const trimRatio = effectiveStartIndex / fullHistory.length;
             const apiStartIndex = Math.floor(fullApiHistory.length * trimRatio);
-            return { history: fullApiHistory.slice(apiStartIndex), trimStartIndex: effectiveStartIndex };
+            return this.cleanHistoryStart(fullApiHistory.slice(apiStartIndex), effectiveStartIndex);
         }
-        
+
         // 获取最大上下文和阈值
         const maxContextTokens = (config as any).maxContextTokens || 128000;
         const thresholdConfig = config.contextThreshold ?? '80%';
         const threshold = this.calculateThreshold(thresholdConfig, maxContextTokens);
-        
+
         // 如果估算总 token 未超过阈值，直接返回从起始索引开始的历史
         if (estimatedTotalTokens <= threshold) {
             if (effectiveStartIndex === 0) {
                 const history = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
-                return { history, trimStartIndex: 0 };
+                return this.cleanHistoryStart(history, 0);
             }
             const fullApiHistory = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
             const trimRatio = effectiveStartIndex / fullHistory.length;
             const apiStartIndex = Math.floor(fullApiHistory.length * trimRatio);
-            return { history: fullApiHistory.slice(apiStartIndex), trimStartIndex: effectiveStartIndex };
+            return this.cleanHistoryStart(fullApiHistory.slice(apiStartIndex), effectiveStartIndex);
         }
-        
+
         // 超过阈值，需要裁剪
         // 现在 roundTokenInfos 只包含 effectiveStartIndex 之后的回合，不需要再过滤
         const roundsAfterStart = roundTokenInfos;
-        
+
         // 至少需要保留当前回合（最后一个回合）
         if (roundsAfterStart.length <= 1) {
             // 即使只有一个回合也要返回从起始索引开始的历史
             const fullApiHistory = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
             const trimRatio = effectiveStartIndex / fullHistory.length;
             const apiStartIndex = Math.floor(fullApiHistory.length * trimRatio);
-            return { history: fullApiHistory.slice(apiStartIndex), trimStartIndex: effectiveStartIndex };
+            return this.cleanHistoryStart(fullApiHistory.slice(apiStartIndex), effectiveStartIndex);
         }
         
         // 计算额外裁剪的 token 数
@@ -2196,7 +2468,7 @@ export class ChatHandler {
             const fullApiHistory = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
             const trimRatio = effectiveStartIndex / fullHistory.length;
             const apiStartIndex = Math.floor(fullApiHistory.length * trimRatio);
-            return { history: fullApiHistory.slice(apiStartIndex), trimStartIndex: effectiveStartIndex };
+            return this.cleanHistoryStart(fullApiHistory.slice(apiStartIndex), effectiveStartIndex);
         }
         
         // 计算在原始历史中的起始索引
@@ -2212,19 +2484,59 @@ export class ChatHandler {
         let trimmedHistory = fullApiHistory.slice(apiStartIndex);
         let finalTrimStartIndex = trimStartIndex;
         
-        // 确保历史以 user 消息开始（Gemini API 要求）
-        if (trimmedHistory.length > 0 && trimmedHistory[0].role !== 'user') {
-            const firstUserIndex = trimmedHistory.findIndex(m => m.role === 'user');
-            if (firstUserIndex > 0) {
-                trimmedHistory = trimmedHistory.slice(firstUserIndex);
-                // 调整起始索引
-                finalTrimStartIndex = trimStartIndex + firstUserIndex;
-            }
-        }
-        
-        return { history: trimmedHistory, trimStartIndex: finalTrimStartIndex };
+        // 清理历史开头的无效消息（非 user 消息、孤立的 functionResponse）
+        return this.cleanHistoryStart(trimmedHistory, finalTrimStartIndex);
     }
-    
+
+    /**
+     * 清理历史开头的无效消息
+     *
+     * 确保历史以有效的 user 消息开始：
+     * 1. 跳过开头的非 user 消息（Gemini API 要求）
+     * 2. 跳过孤立的 functionResponse 消息（对应的 functionCall 已被裁剪/过滤）
+     *
+     * @param history 要清理的历史
+     * @param trimStartIndex 当前的裁剪起始索引
+     * @returns 清理后的历史和调整后的裁剪索引
+     */
+    private cleanHistoryStart(
+        history: Content[],
+        trimStartIndex: number
+    ): { history: Content[]; trimStartIndex: number } {
+        if (history.length === 0) {
+            return { history, trimStartIndex };
+        }
+
+        let startIndex = 0;
+
+        // 跳过开头的非 user 消息
+        while (startIndex < history.length && history[startIndex].role !== 'user') {
+            startIndex++;
+        }
+
+        // 跳过开头的 functionResponse 消息（它们没有对应的 functionCall）
+        while (startIndex < history.length) {
+            const msg = history[startIndex];
+            if (msg.role !== 'user') break;
+
+            // 检查是否为纯 functionResponse 消息
+            const isFunctionResponse = msg.parts?.every(p => p.functionResponse !== undefined);
+            if (!isFunctionResponse) break;
+
+            // 这是 functionResponse，需要跳过
+            startIndex++;
+        }
+
+        if (startIndex > 0) {
+            return {
+                history: history.slice(startIndex),
+                trimStartIndex: trimStartIndex + startIndex
+            };
+        }
+
+        return { history, trimStartIndex };
+    }
+
     /**
      * 获取用于 API 调用的历史（保持向后兼容的简化版本）
      */
@@ -2236,7 +2548,7 @@ export class ChatHandler {
         const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions);
         return result.history;
     }
-    
+
     /**
      * 检查消息的 parts 中是否包含思考内容
      *
@@ -3411,10 +3723,10 @@ export class ChatHandler {
                     parts: retryFunctionResponseParts,
                     isFunctionResponse: true
                 });
-                
+
                 // 计算工具响应消息的 token 数
                 await this.preCountUserMessageTokens(conversationId, config.type);
-                
+
                 // 检查是否有工具被取消
                 const retryHasCancelled = toolResults.some(r => (r.result as any).cancelled);
                 if (retryHasCancelled) {
@@ -3428,7 +3740,22 @@ export class ChatHandler {
                     };
                     return;
                 }
-                
+
+                // 检查是否有文件修改工具执行，需要暂停循环等待用户确认
+                if (hasFileModificationToolInResults(toolResults)) {
+                    const retryDiffToolIds = getFileModificationToolIds(toolResults);
+                    yield {
+                        conversationId,
+                        content: finalContent,
+                        toolIteration: true as const,
+                        toolResults,
+                        checkpoints,
+                        needAnnotation: true as const,
+                        pendingDiffToolIds: retryDiffToolIds
+                    };
+                    return;
+                }
+
                 // 发送 toolIteration 信号（包含检查点）
                 yield {
                     conversationId,
@@ -3437,11 +3764,11 @@ export class ChatHandler {
                     toolResults,
                     checkpoints
                 };
-                
+
                 // 继续循环，让 AI 处理函数结果
             }
-            
-            // 达到最大迭代次数
+
+            // 达到最大迭代次数（handleRetryStream）
             yield {
                 conversationId,
                 error: {
@@ -3449,9 +3776,9 @@ export class ChatHandler {
                     message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations })
                 }
             };
-            
+
         } catch (error) {
-            // 检查是否是用户取消错误
+            // 检查是否是用户取消错误（handleRetryStream）
             if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
                 // 用户取消，yield cancelled 消息
                 yield {
@@ -3949,7 +4276,7 @@ export class ChatHandler {
                 
                 // 有工具调用，检查是否需要确认
                 const editToolsNeedingConfirmation = this.getToolsNeedingConfirmation(functionCalls);
-                
+
                 if (editToolsNeedingConfirmation.length > 0) {
                     // 有工具需要确认，发送确认请求到前端
                     const pendingToolCalls: PendingToolCall[] = editToolsNeedingConfirmation.map(call => ({
@@ -3973,7 +4300,7 @@ export class ChatHandler {
                 // 获取当前消息索引
                 const editStreamHistory = await this.conversationManager.getHistoryRef(conversationId);
                 const editStreamMessageIndex = editStreamHistory.length - 1;
-                
+
                 // 工具执行前先发送计时信息（让前端立即显示）
                 yield {
                     conversationId,
@@ -3985,7 +4312,7 @@ export class ChatHandler {
                         args: call.args
                     }))
                 };
-                
+
                 const { responseParts, toolResults, checkpoints, multimodalAttachments: editMultimodalAttachments } = await this.executeFunctionCallsWithResults(
                     functionCalls,
                     conversationId,
@@ -4005,10 +4332,10 @@ export class ChatHandler {
                     parts: editFunctionResponseParts,
                     isFunctionResponse: true
                 });
-                
+
                 // 计算工具响应消息的 token 数
                 await this.preCountUserMessageTokens(conversationId, config.type);
-                
+
                 // 检查是否有工具被取消
                 const editHasCancelled = toolResults.some(r => (r.result as any).cancelled);
                 if (editHasCancelled) {
@@ -4022,7 +4349,22 @@ export class ChatHandler {
                     };
                     return;
                 }
-                
+
+                // 检查是否有文件修改工具执行，需要暂停循环等待用户确认
+                if (hasFileModificationToolInResults(toolResults)) {
+                    const editDiffToolIds = getFileModificationToolIds(toolResults);
+                    yield {
+                        conversationId,
+                        content: finalContent,
+                        toolIteration: true as const,
+                        toolResults,
+                        checkpoints,
+                        needAnnotation: true as const,
+                        pendingDiffToolIds: editDiffToolIds
+                    };
+                    return;
+                }
+
                 // 发送 toolIteration 信号（包含检查点）
                 yield {
                     conversationId,
@@ -4031,11 +4373,11 @@ export class ChatHandler {
                     toolResults,
                     checkpoints
                 };
-                
+
                 // 继续循环，让 AI 处理函数结果
             }
-            
-            // 达到最大迭代次数
+
+            // 达到最大迭代次数（handleEditAndRetryStream）
             yield {
                 conversationId,
                 error: {
@@ -4043,7 +4385,7 @@ export class ChatHandler {
                     message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations })
                 }
             };
-            
+
         } catch (error) {
             // 检查是否是用户取消错误
             if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
@@ -4054,14 +4396,14 @@ export class ChatHandler {
                 } as any;
                 return;
             }
-            
+
             yield {
                 conversationId: request.conversationId,
                 error: this.formatError(error)
             };
         }
     }
-    
+
     /**
      * 处理删除到指定消息的请求
      *

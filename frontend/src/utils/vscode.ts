@@ -28,7 +28,13 @@ export function sendToExtension<T = any>(type: string, data: any): Promise<T> {
   return new Promise((resolve, reject) => {
     const requestId = generateRequestId()
     const vscode = getVSCodeAPI()
-    
+
+    // 针对 continueWithAnnotation 的详细日志
+    if (type === 'continueWithAnnotation') {
+      console.log('[sendToExtension] continueWithAnnotation - requestId:', requestId, 'timestamp:', Date.now())
+      console.trace('[sendToExtension] continueWithAnnotation call stack')
+    }
+
     // 注册响应处理器
     messageHandlers.set(requestId, {
       resolve: (data: T) => {
@@ -38,7 +44,7 @@ export function sendToExtension<T = any>(type: string, data: any): Promise<T> {
         reject(error)
       }
     })
-    
+
     // 发送消息
     vscode.postMessage({
       type,
@@ -151,7 +157,7 @@ export async function loadDiffContent(diffContentId: string): Promise<{
       filePath?: string
       error?: string
     }>('diff.loadContent', { diffContentId })
-    
+
     if (result.success && result.originalContent && result.newContent) {
       return {
         originalContent: result.originalContent,
@@ -163,5 +169,63 @@ export async function loadDiffContent(diffContentId: string): Promise<{
   } catch (err) {
     console.error('Failed to load diff content:', err)
     return null
+  }
+}
+
+/**
+ * Diff 操作结果
+ */
+export interface DiffActionResult {
+  success: boolean
+  hasAnnotation?: boolean
+  fullAnnotation?: string
+}
+
+/**
+ * 接受 diff 修改（保存文件）
+ *
+ * @param diffId Diff ID
+ * @param annotation 可选的批注内容，会发送给 AI
+ * @returns 操作结果，包含是否成功和处理后的批注
+ */
+export async function acceptDiff(diffId: string, annotation?: string): Promise<DiffActionResult> {
+  try {
+    const result = await sendToExtension<DiffActionResult>('diff.accept', { diffId, annotation })
+    return result
+  } catch (err) {
+    console.error('Failed to accept diff:', err)
+    return { success: false }
+  }
+}
+
+/**
+ * 拒绝 diff 修改（放弃更改）
+ *
+ * @param diffId Diff ID
+ * @param annotation 可选的批注内容，会发送给 AI
+ * @returns 操作结果，包含是否成功和处理后的批注
+ */
+export async function rejectDiff(diffId: string, annotation?: string): Promise<DiffActionResult> {
+  try {
+    const result = await sendToExtension<DiffActionResult>('diff.reject', { diffId, annotation })
+    return result
+  } catch (err) {
+    console.error('Failed to reject diff:', err)
+    return { success: false }
+  }
+}
+
+/**
+ * 获取当前 pending 的 diff 列表
+ *
+ * @returns Pending diff 列表
+ */
+export async function getPendingDiffs(): Promise<Array<{ id: string; filePath: string }>> {
+  try {
+    const result = await sendToExtension<{ diffs: Array<{ id: string; filePath: string }> }>('diff.getPending', {})
+    return result.diffs || []
+  } catch (err) {
+    console.error('Failed to get pending diffs:', err)
+    return []
   }
 }

@@ -121,6 +121,16 @@ export interface ChatStreamToolIterationData {
     }>;
     /** 创建的检查点（如果有） */
     checkpoints?: CheckpointRecord[];
+    /** 标记需要等待用户批注（工具确认后使用） */
+    needAnnotation?: true;
+    /** 需要用户确认的文件修改工具 ID 列表（后端直接告知，前端无需推断） */
+    pendingDiffToolIds?: string[];
+    /** 批注已被使用（后端已将批注添加到对话历史），前端应清空输入框并显示用户消息 */
+    annotationUsed?: string;
+    /**
+     * 待处理的批注（当有 diff 工具需要确认时，批注暂存于此，前端应在 diff 确认时重新发送）
+     */
+    pendingAnnotation?: string;
 }
 
 /**
@@ -301,6 +311,24 @@ export interface ToolConfirmationResponseData {
 
     /** 用户批注（可选，会作为用户消息发送给 AI） */
     annotation?: string;
+
+    /** 取消信号 */
+    abortSignal?: AbortSignal;
+}
+
+/**
+ * 继续对话并带批注请求数据（前端发送到后端）
+ * 用于工具确认执行完成后，用户发送批注
+ */
+export interface ContinueWithAnnotationRequestData {
+    /** 对话 ID */
+    conversationId: string;
+
+    /** 配置 ID */
+    configId: string;
+
+    /** 用户批注（会作为用户消息发送给 AI） */
+    annotation: string;
 
     /** 取消信号 */
     abortSignal?: AbortSignal;
