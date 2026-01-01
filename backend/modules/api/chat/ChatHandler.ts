@@ -3110,7 +3110,8 @@ export class ChatHandler {
                 parts: msg.parts
                     // 过滤掉思考内容（总结不需要思考过程）
                     // 同时过滤掉只包含 thoughtSignatures 的 part（移除签名后会变成空对象）
-                    .filter(part => !part.thought && !(part.thoughtSignatures && Object.keys(part).length === 1))
+                    // 过滤掉 inlineData（Base64 图像/音频/视频等），总结只需要文本历史
+                    .filter(part => !part.thought && !(part.thoughtSignatures && Object.keys(part).length === 1) && !part.inlineData)
                     .map(part => {
                         let cleanedPart = { ...part };
                         

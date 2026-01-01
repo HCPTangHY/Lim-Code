@@ -427,11 +427,13 @@ export async function* proxyStreamFetch(
         });
         
         if (!response.ok) {
+            // 注意：Response body 只能读取一次，先读取 text 再尝试解析 JSON
             let errorBody: any;
+            const errorText = await response.text();
             try {
-                errorBody = await response.json();
+                errorBody = JSON.parse(errorText);
             } catch {
-                errorBody = await response.text();
+                errorBody = errorText;
             }
             throw new ChannelError(
                 ErrorType.API_ERROR,

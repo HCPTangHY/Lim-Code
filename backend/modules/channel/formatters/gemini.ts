@@ -50,8 +50,8 @@ export class GeminiFormatter extends BaseFormatter {
             // JSON 模式：将 functionCall 和 functionResponse 转换为 JSON 代码块
             processedHistory = this.convertHistoryToJSONMode(history);
         } else {
-            // Function Call 模式：直接使用原始历史
-            processedHistory = history;
+            // Function Call 模式：清理 Gemini API 不支持的字段（如 functionResponse.id）
+            processedHistory = this.cleanHistoryForGeminiAPI(history);
         }
         
         // 转换思考签名格式：将 thoughtSignatures.gemini 转换为 thoughtSignature
@@ -386,6 +386,85 @@ export class GeminiFormatter extends BaseFormatter {
      */
     getSupportedType(): string {
         return 'gemini';
+    }
+    
+    /**
+     * 清理历史记录中 Gemini API 不支持的字段
+     *
+     * Gemini API 的 functionResponse 不支持以下字段：
+     * - id: Anthropic API 使用，用于关联 tool_use 和 tool_result
+     * - functionCall.id: 同样不被 Gemini API 接受
+     *
+     * 同时清理其他内部字段（isFunctionResponse, tokenCountByChannel 等）
+     */
+    private cleanHistoryForGeminiAPI(history: Content[]): Content[] {
+        return history.map(content => {
+            const cleanedParts: ContentPart[] = content.parts.map(part => {
+                // 创建清理后的 part
+                const cleanedPart: ContentPart = {};
+                
+                // text
+                if (part.text !== undefined) {
+                    cleanedPart.text = part.text;
+                }
+                
+                // thought
+                if (part.thought !== undefined) {
+                    cleanedPart.thought = part.thought;
+                }
+                
+                // inlineData - 只保留 API 需要的字段
+                if (part.inlineData) {
+                    cleanedPart.inlineData = {
+                        mimeType: part.inlineData.mimeType,
+                        data: part.inlineData.data
+                    };
+                    if (part.inlineData.displayName) {
+                        cleanedPart.inlineData.displayName = part.inlineData.displayName;
+                    }
+                }
+                
+                // fileData
+                if (part.fileData) {
+                    cleanedPart.fileData = { ...part.fileData };
+                }
+                
+                // functionCall - 不包含 id（Gemini API 不支持）
+                if (part.functionCall) {
+                    cleanedPart.functionCall = {
+                        name: part.functionCall.name,
+                        args: part.functionCall.args
+                    };
+                    // 注意：不包含 id，因为 Gemini API 不支持
+                }
+                
+                // functionResponse - 不包含 id（Gemini API 不支持）
+                if (part.functionResponse) {
+                    cleanedPart.functionResponse = {
+                        name: part.functionResponse.name,
+                        response: part.functionResponse.response
+                    };
+                    // Gemini 3+ 支持多模态函数响应的 parts
+                    if (part.functionResponse.parts && part.functionResponse.parts.length > 0) {
+                        cleanedPart.functionResponse.parts = part.functionResponse.parts;
+                    }
+                    // 注意：不包含 id，因为 Gemini API 不支持
+                }
+                
+                // thoughtSignatures 会在 convertThoughtSignatures 中处理
+                if (part.thoughtSignatures) {
+                    cleanedPart.thoughtSignatures = part.thoughtSignatures;
+                }
+                
+                return cleanedPart;
+            });
+            
+            // 只返回 role 和 parts，不包含其他元数据
+            return {
+                role: content.role,
+                parts: cleanedParts
+            };
+        });
     }
     
     /**

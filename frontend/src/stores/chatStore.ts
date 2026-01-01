@@ -1643,6 +1643,8 @@ export const useChatStore = defineStore('chat', () => {
       isSendingDiffContinue.value = false
       // 清空 pendingDiffToolIds，避免对话完成后仍显示暂停状态
       pendingDiffToolIds.value = []
+      // 清空 processedDiffTools（对话完成后才清空，避免 UI 状态回退）
+      processedDiffTools.value = new Map()
 
       updateConversationAfterMessage()
     } else if (chunk.type === 'checkpoints') {
@@ -1729,6 +1731,7 @@ export const useChatStore = defineStore('chat', () => {
       isSendingAnnotation = false
       isSendingDiffContinue.value = false
       pendingDiffToolIds.value = []
+      processedDiffTools.value = new Map()
     } else if (chunk.type === 'error') {
       error.value = chunk.error || {
         code: 'STREAM_ERROR',
@@ -1748,6 +1751,7 @@ export const useChatStore = defineStore('chat', () => {
       isSendingAnnotation = false
       isSendingDiffContinue.value = false
       pendingDiffToolIds.value = []
+      processedDiffTools.value = new Map()
     }
   }
 
@@ -2951,7 +2955,9 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
     isSendingDiffContinue.value = true
-    processedDiffTools.value = new Map()
+    // 注意：不要在这里清空 processedDiffTools！
+    // 清空会导致 UI 重新计算时工具状态回退到 pending，按钮重新出现
+    // processedDiffTools 应该在 complete/cancelled/error 时清空
     error.value = null
     isLoading.value = true
     pendingDiffToolIds.value = []
