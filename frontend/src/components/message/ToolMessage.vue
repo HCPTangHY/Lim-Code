@@ -10,7 +10,7 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
-import { ref, computed, Component, h, watchEffect, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, Component, h, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { ToolUsage } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
@@ -66,8 +66,20 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       // 已处理的工具跳过检查（防止状态回退到 pending）
       if ((tool.name === 'apply_diff' || tool.name === 'write_file') && status !== 'error') {
         const isAlreadyProcessed = processedDiffTools.value.has(tool.id)
+        
+        // 【修复】检查用户是否正在操作这个工具（已点击保存/拒绝按钮，等待后端响应）
+        // 在此期间不应将状态设为 pending
+        const isUserProcessing = diffLoadingIds.value.has(tool.id)
 
-        if (!isAlreadyProcessed) {
+        // 【关键修复】判断对话是否已完成：
+        // - 不在等待响应状态
+        // - 工具 ID 不在后端告知的待确认列表中
+        // 当对话完成后，即使工具结果中有 pendingDiffId，也不应将状态设为 pending
+        // 这解决了 complete 时 processedDiffTools 被清空后 UI 状态回退的问题
+        const isConversationComplete = !chatStore.isWaitingForResponse && 
+                                        !chatStore.pendingDiffToolIds.includes(tool.id)
+
+        if (!isAlreadyProcessed && !isUserProcessing && !isConversationComplete) {
           let hasPending = false
 
           // 检查 pendingDiffMap（轮询获取）
@@ -181,15 +193,21 @@ function getToolFilePaths(tool: ToolUsage): string[] {
  * 显示条件：
  * 1. 工具已被用户处理（显示处理结果）
  * 2. 工具 ID 在 requiredDiffToolIds 中（后端告知需要确认）
- * 3. 工具结果中有 pendingDiffId
+ * 3. 工具结果中有 pendingDiffId 且正在等待确认
  *
  * 不显示条件：
  * - 工具状态是 error（diff 应用失败）
- * - 工具状态是 success 且不在待确认列表中（历史记录）
+ * - 工具状态是 success 且不在待确认列表中（历史记录或已完成）
+ * - 用户正在处理（diffLoadingIds 中）
  */
 function shouldShowDiffArea(tool: ToolUsage): boolean {
   // 已处理的工具始终显示（显示处理结果）
   if (processedDiffTools.value.has(tool.id)) {
+    return true
+  }
+  
+  // 用户正在处理，显示按钮区域（会显示 loading 状态）
+  if (diffLoadingIds.value.has(tool.id)) {
     return true
   }
 
@@ -208,8 +226,14 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
     return true
   }
 
-  // success 状态且不在待确认列表中，说明是历史记录
+  // success 状态且不在待确认列表中，说明是历史记录或已完成对话
   if (tool.status === 'success') {
+    return false
+  }
+  
+  // 【关键修复】如果对话已完成（不在等待响应状态），不显示按钮
+  // 这解决了 complete 后 processedDiffTools 被清空导致按钮重新出现的问题
+  if (!chatStore.isWaitingForResponse && !chatStore.isStreaming) {
     return false
   }
 
@@ -314,12 +338,11 @@ function resetDiffState(): void {
   firstDiffAnnotation = ''
 }
 
-// 监听 requiredDiffToolIds 变化，自动触发继续对话
-watch(requiredDiffToolIds, (newIds) => {
-  if (newIds.size > 0 && processedDiffTools.value.size > 0) {
-    checkAndContinueConversation()
-  }
-})
+// 【已移除 watch】
+// 原来的 watch(requiredDiffToolIds) 被移除，原因：
+// 1. 存在竞态条件：fallback 发请求后，后端返回 pendingDiffToolIds，watch 触发导致重复请求
+// 2. watch 的触发时机不可控，容易与用户直接操作（点击按钮）冲突
+// 3. 现在统一由 markDiffAsAccepted/markDiffAsRejected 调用 tryToContinueDiff 处理
 
 // 标记工具为已接受，并检查是否需要继续对话
 async function markDiffAsAccepted(tool: ToolUsage): Promise<void> {
@@ -328,18 +351,63 @@ async function markDiffAsAccepted(tool: ToolUsage): Promise<void> {
     pendingDiffMap.value.delete(path)
   }
   chatStore.markDiffToolProcessed(tool.id, 'accept')
-  await checkAndContinueConversationWithFallback(tool)
+  await tryToContinueDiff()
 }
 
-// 检查是否所有 diff 都已处理，是则继续对话
-async function checkAndContinueConversation(): Promise<void> {
-  if (!chatStore.areAllRequiredDiffsProcessed()) {
-    return
-  }
+/**
+ * 尝试继续对话（统一入口）
+ *
+ * 处理两种情况：
+ * 1. 后端发送了 pendingDiffToolIds：检查是否全部处理完毕
+ * 2. 后端未发送 pendingDiffToolIds（为空）：自己判断是否还有未处理的工具
+ *
+ * 这是唯一的继续对话触发源，避免了 watch 和直接调用的竞态条件。
+ */
+async function tryToContinueDiff(): Promise<void> {
+  console.log('[ToolMessage] tryToContinueDiff called:', {
+    pendingDiffToolIds: chatStore.pendingDiffToolIds,
+    processedDiffTools: Array.from(processedDiffTools.value.keys()),
+    isSendingDiffContinue: isSendingDiffContinue.value
+  })
+  
+  // 防止重复发送
   if (isSendingDiffContinue.value) {
+    console.log('[ToolMessage] tryToContinueDiff: isSendingDiffContinue=true, skip')
     return
   }
+  
+  // 场景 1：后端发送了 pendingDiffToolIds
+  if (chatStore.pendingDiffToolIds.length > 0) {
+    console.log('[ToolMessage] tryToContinueDiff: using pendingDiffToolIds logic')
+    if (!chatStore.areAllRequiredDiffsProcessed()) {
+      console.log('[ToolMessage] tryToContinueDiff: not all required diffs processed, wait')
+      return
+    }
+  } else {
+    // 场景 2：pendingDiffToolIds 为空，自己判断
+    console.log('[ToolMessage] tryToContinueDiff: using fallback logic (pendingDiffToolIds empty)')
+    
+    // 检查当前消息中是否还有其他未处理的 diff 工具
+    const unprocessedDiffTools = enhancedTools.value.filter(t => {
+      if (t.name !== 'apply_diff' && t.name !== 'write_file') return false
+      if (processedDiffTools.value.has(t.id)) return false
+      // 检查工具是否有待确认的 diff
+      const resultData = (t.result as any)?.data
+      if (resultData?.pendingDiffId) return true
+      if (t.name === 'write_file' && resultData?.results) {
+        return resultData.results.some((r: any) => r.pendingDiffId)
+      }
+      return false
+    })
 
+    if (unprocessedDiffTools.length > 0) {
+      console.log('[ToolMessage] tryToContinueDiff: has unprocessed tools, wait')
+      return
+    }
+  }
+  
+  // 所有工具都已处理，继续对话
+  console.log('[ToolMessage] tryToContinueDiff: all processed, calling continueDiffWithAnnotation')
   const annotationToSend = firstDiffAnnotation
   resetDiffState()
 
@@ -347,55 +415,6 @@ async function checkAndContinueConversation(): Promise<void> {
     await chatStore.continueDiffWithAnnotation(annotationToSend)
   } catch (err) {
     console.error('continueDiffWithAnnotation failed:', err)
-  }
-}
-
-/**
- * 检查是否需要继续对话（带备用逻辑）
- *
- * 当 pendingDiffToolIds 为空时（后端未正确发送），使用当前工具作为唯一需要处理的工具。
- * 这解决了 write_file 等工具在某些情况下 pendingDiffToolIds 未被设置的问题。
- *
- * @param currentTool 当前正在处理的工具
- */
-async function checkAndContinueConversationWithFallback(_currentTool: ToolUsage): Promise<void> {
-  // 优先使用标准逻辑
-  if (chatStore.pendingDiffToolIds.length > 0) {
-    await checkAndContinueConversation()
-    return
-  }
-
-  // 备用逻辑：pendingDiffToolIds 为空，但用户已点击按钮处理了当前工具
-  // 检查当前消息中是否还有其他未处理的 diff 工具
-  const unprocessedDiffTools = enhancedTools.value.filter(t => {
-    if (t.name !== 'apply_diff' && t.name !== 'write_file') return false
-    if (processedDiffTools.value.has(t.id)) return false
-    // 检查工具是否有待确认的 diff
-    const resultData = (t.result as any)?.data
-    if (resultData?.pendingDiffId) return true
-    if (t.name === 'write_file' && resultData?.results) {
-      return resultData.results.some((r: any) => r.pendingDiffId)
-    }
-    return false
-  })
-
-  // 如果还有其他未处理的工具，等待
-  if (unprocessedDiffTools.length > 0) {
-    return
-  }
-
-  // 所有工具都已处理，继续对话
-  if (isSendingDiffContinue.value) {
-    return
-  }
-
-  const annotationToSend = firstDiffAnnotation
-  resetDiffState()
-
-  try {
-    await chatStore.continueDiffWithAnnotation(annotationToSend)
-  } catch (err) {
-    console.error('continueDiffWithAnnotation (fallback) failed:', err)
   }
 }
 
@@ -438,7 +457,7 @@ async function markDiffAsRejected(tool: ToolUsage): Promise<void> {
     pendingDiffMap.value.delete(path)
   }
   chatStore.markDiffToolProcessed(tool.id, 'reject')
-  await checkAndContinueConversationWithFallback(tool)
+  await tryToContinueDiff()
 }
 
 // 拒绝 diff（点击按钮触发）

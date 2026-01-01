@@ -3068,6 +3068,14 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 设置 isSendingDiffContinue 标志
+   * 用于组件在调用 continueDiffWithAnnotation 之前同步设置，防止重复调用
+   */
+  function setIsSendingDiffContinue(value: boolean): void {
+    isSendingDiffContinue.value = value
+  }
+
+  /**
    * 总结上下文
    *
    * 将旧的对话历史压缩为一条总结消息
@@ -3328,6 +3336,7 @@ export const useChatStore = defineStore('chat', () => {
     areAllRequiredDiffsProcessed,
     hasRemainingRequiredDiffs,
     clearDiffProcessingState,
+    setIsSendingDiffContinue,
 
     // UI 辅助方法
     addUserMessageToUI,
