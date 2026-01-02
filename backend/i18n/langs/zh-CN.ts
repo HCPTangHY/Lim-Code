@@ -116,7 +116,8 @@ const zhCN: BackendLanguageMessages = {
 
         dependencies: {
             descriptions: {
-                sharp: '高性能图像处理库，用于抠图功能的遮罩应用'
+                sharp: '高性能图像处理库，用于抠图功能的遮罩应用',
+                transformers: '本地 AI 抠图引擎 (RMBG-2.0)，2024 SOTA 级别，发丝级精度，完全离线运行'
             },
             errors: {
                 requiresContext: 'DependencyManager 需要首次调用时传入 ExtensionContext',

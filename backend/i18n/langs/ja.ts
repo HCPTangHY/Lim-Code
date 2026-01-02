@@ -116,7 +116,8 @@ const ja: BackendLanguageMessages = {
 
         dependencies: {
             descriptions: {
-                sharp: '背景除去でマスク適用に使用する高性能画像処理ライブラリ'
+                sharp: '背景除去でマスク適用に使用する高性能画像処理ライブラリ',
+                transformers: 'ローカル AI 背景除去エンジン (RMBG-2.0)、2024 SOTA レベル、髪の毛レベルの精度、完全オフライン'
             },
             errors: {
                 requiresContext: 'DependencyManager は初回呼び出し時に ExtensionContext が必要です',

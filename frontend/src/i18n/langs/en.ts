@@ -1845,7 +1845,7 @@ const en: LanguageMessages = {
                         disabled: 'Disabled'
                     },
                     checkingDependency: 'Checking dependency status...',
-                    dependencyMessage: 'Background removal requires the sharp library to process images.',
+                    dependencyMessage: 'Background removal requires the local AI engine to be installed.',
                     batchTasks: 'Batch Tasks ({count})',
                     removeTask: 'Remove Background Task',
                     subjectDescription: 'Subject Description',

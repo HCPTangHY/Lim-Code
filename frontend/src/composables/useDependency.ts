@@ -115,7 +115,7 @@ export function useDependency(options: UseDependencyOptions): UseDependencyRetur
  * 定义哪些工具需要哪些依赖
  */
 export const TOOL_DEPENDENCIES: Record<string, string[]> = {
-  'remove_background': ['sharp'],
+  'remove_background': ['@huggingface/transformers', 'sharp'],
   'crop_image': ['sharp'],
   'resize_image': ['sharp'],
   'rotate_image': ['sharp']

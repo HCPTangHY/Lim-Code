@@ -116,7 +116,8 @@ const en: BackendLanguageMessages = {
 
         dependencies: {
             descriptions: {
-                sharp: 'High-performance image processing library for mask application in background removal'
+                sharp: 'High-performance image processing library for mask application in background removal',
+                transformers: 'Local AI background removal engine (RMBG-2.0), 2024 SOTA level, hair-level precision, fully offline'
             },
             errors: {
                 requiresContext: 'DependencyManager requires ExtensionContext on first call',

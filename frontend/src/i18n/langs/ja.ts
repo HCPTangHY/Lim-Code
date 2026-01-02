@@ -1845,7 +1845,7 @@ const ja: LanguageMessages = {
                         disabled: '無効'
                     },
                     checkingDependency: '依存関係のステータスを確認中...',
-                    dependencyMessage: '背景除去機能には画像処理用の sharp ライブラリが必要です。',
+                    dependencyMessage: '背景除去機能にはローカル AI エンジンのインストールが必要です。',
                     batchTasks: 'バッチタスク ({count})',
                     removeTask: '背景除去タスク',
                     subjectDescription: '主題の説明',

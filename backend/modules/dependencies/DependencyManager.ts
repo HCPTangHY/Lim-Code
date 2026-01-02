@@ -79,6 +79,11 @@ export class DependencyManager {
             version: '^0.33.5',
             descriptionKey: 'modules.dependencies.descriptions.sharp',
             estimatedSize: 30  // MB
+        },
+        '@huggingface/transformers': {
+            version: '^3.4.1',
+            descriptionKey: 'modules.dependencies.descriptions.transformers',
+            estimatedSize: 50  // MB（运行时会下载模型约 180MB）
         }
     };
     
@@ -175,11 +180,20 @@ export class DependencyManager {
     }
     
     /**
+     * 获取包在 node_modules 中的路径
+     * 处理 scope 包（如 @imgly/background-removal-node）
+     */
+    private getPackagePath(name: string): string {
+        // scope 包需要保持目录结构
+        return path.join(this.depsDir, ...name.split('/'));
+    }
+    
+    /**
      * 检查依赖是否已安装
      */
     async isInstalled(name: string): Promise<boolean> {
         try {
-            const packageJsonPath = path.join(this.depsDir, name, 'package.json');
+            const packageJsonPath = path.join(this.getPackagePath(name), 'package.json');
             await statAsync(packageJsonPath);
             return true;
         } catch {
@@ -192,7 +206,7 @@ export class DependencyManager {
      */
     async getInstalledVersion(name: string): Promise<string | undefined> {
         try {
-            const packageJsonPath = path.join(this.depsDir, name, 'package.json');
+            const packageJsonPath = path.join(this.getPackagePath(name), 'package.json');
             const content = await readFile(packageJsonPath, 'utf-8');
             const pkg = JSON.parse(content);
             return pkg.version;
@@ -225,16 +239,24 @@ export class DependencyManager {
             // 确保目录存在
             await this.initialize();
             
+            const tempDir = path.join(this.limcodeDir, 'deps-temp');
+            
+            // 清理临时目录（确保干净安装）
+            try {
+                await rm(tempDir, { recursive: true, force: true });
+            } catch {
+                // 忽略错误
+            }
+            
             // 创建临时 package.json
             const tempPackageJson = {
                 name: 'limcode-deps',
-                version: '1.0.5',
+                version: '1.0.0',
                 dependencies: {
                     [name]: config.version
                 }
             };
             
-            const tempDir = path.join(this.limcodeDir, 'deps-temp');
             const packageJsonPath = path.join(tempDir, 'package.json');
             
             // 创建临时目录
@@ -272,8 +294,8 @@ export class DependencyManager {
                 throw new Error(t('modules.dependencies.errors.nodeModulesNotFound'));
             }
             
-            // 检查主包是否存在
-            const mainPackageDir = path.join(sourceNodeModules, name);
+            // 检查主包是否存在（处理 scope 包）
+            const mainPackageDir = path.join(sourceNodeModules, ...name.split('/'));
             try {
                 await statAsync(mainPackageDir);
             } catch {
@@ -337,8 +359,21 @@ export class DependencyManager {
      */
     async uninstall(name: string): Promise<boolean> {
         try {
-            const targetDir = path.join(this.depsDir, name);
+            const targetDir = this.getPackagePath(name);
             await rm(targetDir, { recursive: true, force: true });
+            
+            // 如果是 scope 包，尝试清理空的 scope 目录
+            if (name.startsWith('@')) {
+                const scopeDir = path.join(this.depsDir, name.split('/')[0]);
+                try {
+                    const entries = await readdir(scopeDir);
+                    if (entries.length === 0) {
+                        await rm(scopeDir, { recursive: true, force: true });
+                    }
+                } catch {
+                    // 忽略错误
+                }
+            }
             
             // 清除缓存并更新安装状态
             this.loadedModules.delete(name);
@@ -369,7 +404,7 @@ export class DependencyManager {
         }
         
         try {
-            const modulePath = path.join(this.depsDir, name);
+            const modulePath = this.getPackagePath(name);
             // 使用 require 加载
             const mod = require(modulePath);
             this.loadedModules.set(name, mod);

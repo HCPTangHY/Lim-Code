@@ -132,6 +132,7 @@ export interface BackendLanguageMessages {
         dependencies: {
             descriptions: {
                 sharp: string;
+                transformers: string;
             };
             errors: {
                 requiresContext: string;

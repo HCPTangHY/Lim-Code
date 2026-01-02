@@ -1775,7 +1775,7 @@ const zhCN: LanguageMessages = {
                         disabled: '已禁用'
                     },
                     checkingDependency: '检查依赖状态...',
-                    dependencyMessage: '抠图功能需要 sharp 库来处理图像。',
+                    dependencyMessage: '抠图功能需要安装本地 AI 抠图引擎。',
                     batchTasks: '批量任务 ({count})',
                     removeTask: '抠图任务',
                     subjectDescription: '主体描述',

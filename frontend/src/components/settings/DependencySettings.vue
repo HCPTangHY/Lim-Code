@@ -10,10 +10,23 @@
       <code>{{ installPath }}</code>
     </div>
     
-    <!-- 安装进度消息 -->
-    <div v-if="progressMessage" class="progress-message" :class="progressType">
-      <i :class="progressIcon"></i>
-      <span>{{ progressMessage }}</span>
+    <!-- 安装进度 -->
+    <div v-if="installing || uninstalling || progressMessage" class="progress-container">
+      <!-- 进度条 -->
+      <div v-if="installing || uninstalling" class="progress-bar-wrapper">
+        <div class="progress-bar">
+          <div class="progress-bar-indeterminate"></div>
+        </div>
+        <span class="progress-label">
+          {{ installing ? t('components.settings.dependencySettings.progress.installing', { name: installing }) : t('components.settings.dependencySettings.progress.uninstalling', { name: uninstalling }) }}
+        </span>
+      </div>
+      
+      <!-- 进度消息 -->
+      <div v-if="progressMessage" class="progress-message" :class="progressType">
+        <i :class="progressIcon"></i>
+        <span>{{ progressMessage }}</span>
+      </div>
     </div>
     
     <!-- 按工具分组的依赖面板 -->
@@ -503,11 +516,69 @@ onUnmounted(() => {
   opacity: 0.5;
 }
 
+/* 进度容器 */
+.progress-container {
+  margin-bottom: 16px;
+}
+
+.progress-bar-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.progress-bar {
+  height: 4px;
+  background: var(--vscode-progressBar-background, rgba(255, 255, 255, 0.1));
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar-indeterminate {
+  height: 100%;
+  width: 30%;
+  background: var(--vscode-progressBar-foreground, var(--vscode-button-background));
+  border-radius: 2px;
+  animation: indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.progress-label {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-label::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--vscode-button-background);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
 .progress-message {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 16px;
   padding: 10px 14px;
   border-radius: 4px;
   font-size: 12px;
