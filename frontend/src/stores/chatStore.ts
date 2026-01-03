@@ -1342,11 +1342,11 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       // 查找要更新的消息
-      // 注意：当 skipContinueConversation=true 时，streamingMessageId 可能已被
-      // _createAnnotationMessagesAndSend 更新为新的占位消息 ID
+      // 注意：当 isSendingAnnotation=true 时，streamingMessageId 可能已被
+      // rejectPendingToolsWithAnnotation 或 _createAnnotationMessagesAndSend 更新为新的占位消息 ID
       // 此时应该查找最后一条带工具的助手消息，而不是新的空占位消息
       let messageIndex = -1
-      if (skipContinueConversation) {
+      if (skipContinueConversation || isSendingAnnotation) {
         // 从后往前查找最后一条带工具的助手消息
         for (let i = allMessages.value.length - 1; i >= 0; i--) {
           const msg = allMessages.value[i]
@@ -1441,7 +1441,7 @@ export const useChatStore = defineStore('chat', () => {
           // 此时 ToolMessage.tryToContinueDiff() 因为 pendingDiffToolIds 为空而返回
           // 现在 pendingDiffToolIds 已设置，如果所有 diff 都已处理，自动继续对话
           if (areAllRequiredDiffsProcessed()) {
-            console.log('[chatStore] toolIteration: all diffs already processed, auto continuing')
+            // All diffs already processed, auto continuing
             // 使用 setTimeout 确保状态更新完成后再调用
             // 使用保存在 store 中的批注
             const savedAnnotation = diffAnnotation.value
@@ -1476,10 +1476,11 @@ export const useChatStore = defineStore('chat', () => {
           }))
         }
 
-        // 当 skipContinueConversation=true 时，_createAnnotationMessagesAndSend 已经
+        // 当 isSendingAnnotation=true 时（包括 skipContinueConversation=true 的情况），
+        // rejectPendingToolsWithAnnotation 或 _createAnnotationMessagesAndSend 已经
         // 添加了用户批注消息和助手占位消息。functionResponse 应该插入到它们之前
         // 正确的消息顺序：助手(工具调用) → functionResponse → 用户批注 → 助手响应
-        if (skipContinueConversation) {
+        if (skipContinueConversation || isSendingAnnotation) {
           // 从后往前找第一个非 functionResponse 的用户消息（即用户批注）
           let insertIndex = allMessages.value.length
           for (let i = allMessages.value.length - 1; i >= 0; i--) {
@@ -1507,15 +1508,19 @@ export const useChatStore = defineStore('chat', () => {
       // 这发生在工具确认流程中，没有 diff 工具需要确认的情况
       if (chunk.annotationUsed) {
         inputValue.value = ''
-        // 在前端添加用户消息显示（后端已将批注添加到对话历史）
-        const userMessage: Message = {
-          id: generateId(),
-          role: 'user',
-          content: chunk.annotationUsed,
-          timestamp: Date.now(),
-          parts: [{ text: chunk.annotationUsed }]
+        // 【修复】如果 skipContinueConversation 或 isSendingAnnotation 为 true，
+        // 说明用户消息已在 rejectPendingToolsWithAnnotation 中添加，不需要重复添加
+        if (!skipContinueConversation && !isSendingAnnotation) {
+          // 在前端添加用户消息显示（后端已将批注添加到对话历史）
+          const userMessage: Message = {
+            id: generateId(),
+            role: 'user',
+            content: chunk.annotationUsed,
+            timestamp: Date.now(),
+            parts: [{ text: chunk.annotationUsed }]
+          }
+          allMessages.value.push(userMessage)
         }
-        allMessages.value.push(userMessage)
       }
 
       // 如果有工具被取消，结束 streaming 状态，不继续后续 AI 响应
@@ -1584,14 +1589,21 @@ export const useChatStore = defineStore('chat', () => {
           if (chunk.pendingAnnotation) {
             pendingAnnotation.value = chunk.pendingAnnotation
             inputValue.value = ''
-            const userMessage: Message = {
-              id: generateId(),
-              role: 'user',
-              content: chunk.pendingAnnotation,
-              timestamp: Date.now(),
-              parts: [{ text: chunk.pendingAnnotation }]
+            
+            // 【修复竞态】使用 skipContinueConversation 而不是 isSendingAnnotation
+            // 因为 isSendingAnnotation 在上面已经被重置为 false
+            // 但 skipContinueConversation 在处理开始时就已正确设置
+            // 如果 skipContinueConversation = true，说明用户消息已在 rejectPendingToolsWithAnnotation 中添加
+            if (!skipContinueConversation) {
+              const userMessage: Message = {
+                id: generateId(),
+                role: 'user',
+                content: chunk.pendingAnnotation,
+                timestamp: Date.now(),
+                parts: [{ text: chunk.pendingAnnotation }]
+              }
+              allMessages.value.push(userMessage)
             }
-            allMessages.value.push(userMessage)
           }
 
           streamingMessageId.value = null
@@ -2363,12 +2375,15 @@ export const useChatStore = defineStore('chat', () => {
    * @param annotation 用户的批注内容
    */
   async function rejectPendingToolsWithAnnotation(annotation: string): Promise<void> {
+
     if (!hasPendingToolConfirmation.value || !currentConversationId.value || !currentConfig.value?.id) {
+
       return
     }
 
     // 防止重复发送：如果已经在发送批注，直接返回
     if (isSendingAnnotation) {
+
       return
     }
 
@@ -2908,9 +2923,11 @@ export const useChatStore = defineStore('chat', () => {
    * @param addUserMessage 是否添加用户消息到聊天流（needAnnotation 场景需要，因为输入框有内容；sendDiffAnnotation 总是需要）
    */
   function _createAnnotationMessagesAndSend(annotation: string, addUserMessage: boolean = true): void {
+
     // 防止重复发送（关键检查点）
     // 场景：continueDiffWithAnnotation 发送请求后，后端返回 toolIteration 又触发此函数
     if (isSendingAnnotation) {
+
       return
     }
     isSendingAnnotation = true
@@ -2923,6 +2940,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // 如果需要添加用户消息
     if (addUserMessage && annotation) {
+
       const userMessage: Message = {
         id: generateId(),
         role: 'user',
@@ -2931,6 +2949,8 @@ export const useChatStore = defineStore('chat', () => {
         parts: [{ text: annotation }]
       }
       allMessages.value.push(userMessage)
+    } else {
+
     }
 
     // 创建新的占位消息用于接收后续 AI 响应
@@ -3030,7 +3050,11 @@ export const useChatStore = defineStore('chat', () => {
 
     // 如果有新批注（diff 阶段输入的），先添加用户消息
     // 注意：storedAnnotation 的用户消息已在 toolIteration 处理中添加，不需要重复添加
-    if (newAnnotation) {
+    // 【修复】如果 storedAnnotation 有值，说明用户消息已在 toolIteration 中添加，
+    // newAnnotation 只是格式化后的版本，不应再次添加用户消息
+
+    if (newAnnotation && !storedAnnotation) {
+
       const userMessage: Message = {
         id: generateId(),
         role: 'user',
@@ -3039,6 +3063,8 @@ export const useChatStore = defineStore('chat', () => {
         parts: [{ text: newAnnotation }]
       }
       allMessages.value.push(userMessage)
+    } else {
+
     }
 
     // 发送完整的批注给 AI（包括 storedAnnotation 和 newAnnotation）
