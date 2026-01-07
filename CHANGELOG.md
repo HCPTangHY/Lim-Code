@@ -3,6 +3,10 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.33] - 2026-01-07
+
+  - 优化了两个大文件，进行了拆分解耦
+
 ## [1.0.32] - 2026-01-06
 
   - 优化了oai-responses格式，使其更符合官方示例
