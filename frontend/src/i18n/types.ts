@@ -331,6 +331,15 @@ export interface LanguageMessages {
                 dragHint: string;
                 dropHint: string;
             };
+            filePicker: {
+                title: string;
+                subtitle: string;
+                loading: string;
+                empty: string;
+                navigate: string;
+                select: string;
+                close: string;
+            };
             notifications: {
                 summarizeFailed: string;
                 summarizeSuccess: string;
@@ -679,6 +688,7 @@ export interface LanguageMessages {
                     file: string;
                     search: string;
                     terminal: string;
+                    lsp: string;
                     media: string;
                     mcp: string;
                     other: string;
@@ -1016,27 +1026,6 @@ export interface LanguageMessages {
                     warning: string;
                 };
             };
-            googleSearch: {
-                useDedicatedModel: {
-                    label: string;
-                    hint: string;
-                };
-                selectChannel: {
-                    label: string;
-                    hint: string;
-                    placeholder: string;
-                };
-                selectModel: {
-                    label: string;
-                    hint: string;
-                    placeholder: string;
-                };
-                currentModelHint: string;
-                warningHint: string;
-                noGeminiChannelError: string;
-                invalidChannelError: string;
-                saving: string;
-            };
             mcpSettings: {
                 toolbar: {
                     addServer: string;
@@ -1352,6 +1341,7 @@ export interface LanguageMessages {
                     file: string;
                     search: string;
                     terminal: string;
+                    lsp: string;
                     media: string;
                     other: string;
                 };
@@ -1695,16 +1685,6 @@ export interface LanguageMessages {
                     copyNew: string;
                     deletedLines: string;
                     addedLines: string;
-                    userEdited: string;
-                    userEditedContent: string;
-                    save: string;
-                    reject: string;
-                    saveChanges: string;
-                    rejectChanges: string;
-                    waitingForAction: string;
-                    saved: string;
-                    rejected: string;
-                    waitingOthers: string;
                 };
                 /** create_directory 内容面板 */
                 createDirectoryPanel: {
@@ -1772,7 +1752,6 @@ export interface LanguageMessages {
             search: {
                 findFiles: string;
                 searchInFiles: string;
-                googleSearch: string;
                 filesFound: string;
                 matchesFound: string;
                 noResults: string;
@@ -2035,6 +2014,43 @@ export interface LanguageMessages {
                     rotatingImages: string;
                     openFileFailed: string;
                     saveFailed: string;
+                };
+            };
+            /** LSP 工具 */
+            lsp: {
+                getSymbols: string;
+                gotoDefinition: string;
+                findReferences: string;
+                /** get_symbols 内容面板 */
+                getSymbolsPanel: {
+                    title: string;
+                    totalFiles: string;
+                    totalSymbols: string;
+                    noSymbols: string;
+                    symbolCount: string;
+                    collapse: string;
+                    expandRemaining: string;
+                    copyAll: string;
+                    copied: string;
+                };
+                /** goto_definition 内容面板 */
+                gotoDefinitionPanel: {
+                    title: string;
+                    definitionFound: string;
+                    noDefinition: string;
+                    lines: string;
+                    copyCode: string;
+                    copied: string;
+                };
+                /** find_references 内容面板 */
+                findReferencesPanel: {
+                    title: string;
+                    totalReferences: string;
+                    totalFiles: string;
+                    noReferences: string;
+                    referencesInFile: string;
+                    collapse: string;
+                    expandRemaining: string;
                 };
             };
             /** MCP 工具 */

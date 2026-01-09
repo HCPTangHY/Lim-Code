@@ -126,6 +126,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             const flushMessage = () => {
                 if (messageParts.length > 0) {
                     input.push({
+                        type: 'message',
                         role,
                         content: messageParts
                     });
@@ -140,6 +141,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     const reasoningItem: any = {
                         type: 'reasoning',
                         encrypted_content: part.thoughtSignatures['openai-responses'],
+                        content: null,
                         summary: [] // 必须提供 summary 字段，即使为空，否则 API 会报错
                     };
 
@@ -214,6 +216,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         
                         if (toolContentParts.length > 0) {
                             input.push({
+                                type: 'message',
                                 role: 'user', // 工具返回的内容被视为用户输入
                                 content: toolContentParts
                             });
@@ -364,7 +367,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         // 根据事件类型处理
         switch (chunk.type) {
             case 'response.output_item.added':
-                // 当函数调用或思考项被添加时
+                // 当函数调用被添加时
                 if (chunk.item?.type === 'function_call') {
                     parts.push({
                         functionCall: {
@@ -375,16 +378,6 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                             index: chunk.output_index
                         } as any
                     });
-                } else if (chunk.item?.type === 'reasoning') {
-                    // 推理项被添加时，提取签名 (Encrypted Content)
-                    if (chunk.item.encrypted_content) {
-                        parts.push({
-                            thought: true,
-                            thoughtSignatures: {
-                                'openai-responses': chunk.item.encrypted_content
-                            }
-                        });
-                    }
                 }
                 break;
             

@@ -205,7 +205,7 @@ const en: LanguageMessages = {
 
         input: {
             placeholder: 'Type a message...',
-            placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag to add paths)',
+            placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag or @ to add paths)',
             send: 'Send message',
             stopGenerating: 'Stop generating',
             attachFile: 'Attach file',
@@ -237,6 +237,15 @@ const en: LanguageMessages = {
                 notExists: 'Does not exist',
                 dragHint: 'Hold Shift and drag text files from workspace here to add',
                 dropHint: 'Release to add file'
+            },
+            filePicker: {
+                title: 'Select File',
+                subtitle: 'Type after @ to filter paths',
+                loading: 'Searching...',
+                empty: 'No matching files found',
+                navigate: 'navigate',
+                select: 'select',
+                close: 'close'
             },
             notifications: {
                 summarizeFailed: 'Summarize failed: {error}',
@@ -536,7 +545,8 @@ const en: LanguageMessages = {
                     file: 'File Operations',
                     search: 'Search',
                     terminal: 'Terminal',
-                    media: 'Media',
+                    lsp: 'Code Intelligence',
+                    media: 'Media Processing',
                     mcp: 'MCP Tools',
                     other: 'Other'
                 },
@@ -873,27 +883,6 @@ const en: LanguageMessages = {
                     warning: 'Please configure API Key before using image generation feature'
                 }
             },
-            googleSearch: {
-                useDedicatedModel: {
-                    label: 'Use Dedicated Search Channel',
-                    hint: 'When enabled, search requests will use the channel and model specified below, otherwise use the current conversation channel and model.'
-                },
-                selectChannel: {
-                    label: 'Select Channel',
-                    hint: 'Only Gemini channels are supported (Google Search relies on Gemini grounding feature)',
-                    placeholder: 'Select Gemini channel for search'
-                },
-                selectModel: {
-                    label: 'Select Model',
-                    hint: 'Only shows models added to this channel. To add more models, go to channel settings.',
-                    placeholder: 'Select model for search'
-                },
-                currentModelHint: 'Currently using conversation channel and model for search',
-                warningHint: 'Please select a channel and model, otherwise the conversation channel and model will be used for search',
-                noGeminiChannelError: 'No Gemini channel available. Google Search tool only supports Gemini channels. Please add and enable a Gemini channel in channel settings first.',
-                invalidChannelError: 'The selected channel is not a Gemini type. Please select a Gemini channel.',
-                saving: 'Saving...'
-            },
             mcpSettings: {
                 toolbar: {
                     addServer: 'Add Server',
@@ -1187,7 +1176,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.30',
+                    version: 'Version: 1.0.38',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1315,7 +1304,8 @@ const en: LanguageMessages = {
                     file: 'File Operations',
                     search: 'Search',
                     terminal: 'Terminal',
-                    media: 'Media',
+                    lsp: 'Code Intelligence',
+                    media: 'Media Processing',
                     other: 'Other'
                 },
                 dependency: {
@@ -1636,17 +1626,7 @@ const en: LanguageMessages = {
                     copied: 'Copied',
                     copyNew: 'Copy new content',
                     deletedLines: 'Deleted',
-                    addedLines: 'Added',
-                    userEdited: 'User Edited',
-                    userEditedContent: 'User modified content',
-                    save: 'Save',
-                    reject: 'Reject',
-                    saveChanges: 'Save changes (Ctrl+S)',
-                    rejectChanges: 'Discard changes',
-                    waitingForAction: 'Waiting for user action',
-                    saved: 'Saved',
-                    rejected: 'Rejected',
-                    waitingOthers: 'Waiting for others...'
+                    addedLines: 'Added'
                 },
                 createDirectoryPanel: {
                     title: 'Create Directory',
@@ -1708,7 +1688,6 @@ const en: LanguageMessages = {
             search: {
                 findFiles: 'Find Files',
                 searchInFiles: 'Search in Files',
-                googleSearch: 'Google Search',
                 filesFound: 'Files found',
                 matchesFound: 'Matches found',
                 noResults: 'No results',
@@ -1773,6 +1752,39 @@ const en: LanguageMessages = {
                     waitingOutput: 'Waiting for output...',
                     noOutput: 'No output',
                     executing: 'Command executing...'
+                }
+            },
+            lsp: {
+                getSymbols: 'Get Symbols',
+                gotoDefinition: 'Go to Definition',
+                findReferences: 'Find References',
+                getSymbolsPanel: {
+                    title: 'File Symbols',
+                    totalFiles: 'Total {count} files',
+                    totalSymbols: 'Total {count} symbols',
+                    noSymbols: 'No symbols found',
+                    symbolCount: '{count} symbols',
+                    collapse: 'Collapse',
+                    expandRemaining: 'Expand remaining {count}',
+                    copyAll: 'Copy All',
+                    copied: 'Copied'
+                },
+                gotoDefinitionPanel: {
+                    title: 'Definition',
+                    definitionFound: 'Definition found',
+                    noDefinition: 'No definition found',
+                    lines: '{count} lines',
+                    copyCode: 'Copy Code',
+                    copied: 'Copied'
+                },
+                findReferencesPanel: {
+                    title: 'References',
+                    totalReferences: 'Total {count} references',
+                    totalFiles: '{count} files',
+                    noReferences: 'No references found',
+                    referencesInFile: '{count} references',
+                    collapse: 'Collapse',
+                    expandRemaining: 'Expand remaining {count}'
                 }
             },
             mcp: {
@@ -1877,7 +1889,7 @@ const en: LanguageMessages = {
                         disabled: 'Disabled'
                     },
                     checkingDependency: 'Checking dependency status...',
-                    dependencyMessage: 'Background removal requires the local AI engine to be installed.',
+                    dependencyMessage: 'Background removal requires the sharp library to process images.',
                     batchTasks: 'Batch Tasks ({count})',
                     removeTask: 'Remove Background Task',
                     subjectDescription: 'Subject Description',

@@ -1,0 +1,245 @@
+/**
+ * 流式处理辅助函数
+ * 
+ * 包含消息操作、工具调用解析等辅助函数
+ */
+
+import type { Message } from '../../types'
+import type { ChatStoreState } from './types'
+import { generateId } from '../../utils/format'
+import {
+  XML_TOOL_START,
+  XML_TOOL_END,
+  JSON_TOOL_START,
+  JSON_TOOL_END
+} from './types'
+import { parseXMLToolCall, parseJSONToolCall } from './parsers'
+
+/**
+ * 添加 functionCall 到消息
+ */
+export function addFunctionCallToMessage(
+  message: Message,
+  call: { 
+    id: string; 
+    name: string; 
+    args: Record<string, unknown>; 
+    partialArgs?: string; 
+    index?: number 
+  }
+): void {
+  // 更新 tools 数组
+  if (!message.tools) {
+    message.tools = []
+  }
+  message.tools.push({
+    id: call.id,
+    name: call.name,
+    args: call.args,
+    status: 'running'
+  })
+  
+  // 更新 parts（用于渲染）
+  if (!message.parts) {
+    message.parts = []
+  }
+  message.parts.push({
+    functionCall: {
+      id: call.id,
+      name: call.name,
+      args: call.args,
+      partialArgs: call.partialArgs,
+      index: call.index
+    }
+  })
+}
+
+/**
+ * 添加文本到消息（合并连续的文本 part）
+ */
+export function addTextToMessage(message: Message, text: string, isThought: boolean = false): void {
+  // 普通文本才累加到 content
+  if (!isThought) {
+    message.content += text
+  }
+  
+  if (!message.parts) {
+    message.parts = []
+  }
+  
+  const lastPart = message.parts[message.parts.length - 1]
+  // 只有相同类型（都是思考或都不是思考）才合并
+  const lastIsThought = lastPart?.thought === true
+  if (lastPart && lastPart.text !== undefined && !lastPart.functionCall && lastIsThought === isThought) {
+    lastPart.text += text
+  } else {
+    message.parts.push(isThought ? { text, thought: true } : { text })
+  }
+}
+
+/**
+ * 处理流式文本，检测 XML/JSON 工具调用标记
+ */
+export function processStreamingText(
+  message: Message,
+  text: string,
+  state: ChatStoreState
+): void {
+  let remainingText = text
+  
+  while (remainingText.length > 0) {
+    if (state.inToolCall.value === null) {
+      // 不在工具调用中，检测开始标记
+      const xmlStartIdx = remainingText.indexOf(XML_TOOL_START)
+      const jsonStartIdx = remainingText.indexOf(JSON_TOOL_START)
+      
+      let startIdx = -1
+      let startType: 'xml' | 'json' | null = null
+      let startMarker = ''
+      
+      if (xmlStartIdx !== -1 && (jsonStartIdx === -1 || xmlStartIdx < jsonStartIdx)) {
+        startIdx = xmlStartIdx
+        startType = 'xml'
+        startMarker = XML_TOOL_START
+      } else if (jsonStartIdx !== -1) {
+        startIdx = jsonStartIdx
+        startType = 'json'
+        startMarker = JSON_TOOL_START
+      }
+      
+      if (startIdx !== -1 && startType) {
+        // 找到开始标记，输出标记前的文本
+        const textBefore = remainingText.substring(0, startIdx)
+        if (textBefore) {
+          addTextToMessage(message, textBefore)
+        }
+        
+        // 进入工具调用状态
+        state.inToolCall.value = startType
+        state.toolCallBuffer.value = startMarker
+        remainingText = remainingText.substring(startIdx + startMarker.length)
+      } else {
+        // 没有找到开始标记，检查是否有部分匹配
+        // 为了简化，如果文本末尾可能是开始标记的前缀，暂存
+        const possiblePrefixes = [
+          XML_TOOL_START.substring(0, Math.min(remainingText.length, XML_TOOL_START.length - 1)),
+          JSON_TOOL_START.substring(0, Math.min(remainingText.length, JSON_TOOL_START.length - 1))
+        ]
+        
+        let foundPartial = false
+        for (const prefix of possiblePrefixes) {
+          if (prefix && remainingText.endsWith(prefix.substring(0, remainingText.length))) {
+            // 可能是部分匹配，但为简化处理，直接输出全部文本
+            // 完整的部分匹配检测会很复杂
+          }
+        }
+        
+        if (!foundPartial) {
+          // 输出全部文本
+          addTextToMessage(message, remainingText)
+          remainingText = ''
+        }
+      }
+    } else {
+      // 在工具调用中，查找结束标记
+      const endMarker = state.inToolCall.value === 'xml' ? XML_TOOL_END : JSON_TOOL_END
+      state.toolCallBuffer.value += remainingText
+      
+      const endIdx = state.toolCallBuffer.value.indexOf(endMarker)
+      if (endIdx !== -1) {
+        // 找到结束标记，解析工具调用
+        const toolContent = state.toolCallBuffer.value.substring(
+          state.inToolCall.value === 'xml' ? XML_TOOL_START.length : JSON_TOOL_START.length,
+          endIdx
+        )
+        
+        const parsed = state.inToolCall.value === 'xml'
+          ? parseXMLToolCall(toolContent)
+          : parseJSONToolCall(toolContent)
+        
+        if (parsed) {
+          // 成功解析，添加 functionCall
+          addFunctionCallToMessage(message, {
+            id: generateId(),
+            name: parsed.name,
+            args: parsed.args
+          })
+        } else {
+          // 解析失败，作为普通文本输出
+          addTextToMessage(message, state.toolCallBuffer.value.substring(0, endIdx + endMarker.length))
+        }
+        
+        // 重置状态，处理剩余文本
+        const afterEnd = state.toolCallBuffer.value.substring(endIdx + endMarker.length)
+        state.inToolCall.value = null
+        state.toolCallBuffer.value = ''
+        remainingText = afterEnd
+      } else {
+        // 未找到结束标记，继续累积
+        remainingText = ''
+      }
+    }
+  }
+}
+
+/**
+ * 完成流式时清理工具调用缓冲区
+ */
+export function flushToolCallBuffer(message: Message, state: ChatStoreState): void {
+  if (state.toolCallBuffer.value) {
+    // 如果有未完成的工具调用内容，作为普通文本输出
+    addTextToMessage(message, state.toolCallBuffer.value)
+    state.toolCallBuffer.value = ''
+    state.inToolCall.value = null
+  }
+}
+
+/**
+ * 处理工具调用 part（原生 function call format）
+ */
+export function handleFunctionCallPart(part: any, message: Message): void {
+  const fc = part.functionCall
+  const lastPart = message.parts![message.parts!.length - 1]
+  
+  // 尝试合并到最后一个工具调用块
+  let merged = false
+  if (lastPart && lastPart.functionCall) {
+    const lastFc = lastPart.functionCall
+    
+    // OpenAI 模式：使用 index 匹配，或者如果没有 index 且是增量
+    const canMerge = (fc.index !== undefined && lastFc.index === fc.index) ||
+                     (fc.index === undefined && !fc.id && fc.partialArgs !== undefined)
+    
+    if (canMerge) {
+      // 合并名称和 ID
+      if (fc.name && !lastFc.name) lastFc.name = fc.name
+      if (fc.id && !lastFc.id) lastFc.id = fc.id
+      
+      // 合并参数
+      if (fc.partialArgs !== undefined) {
+        lastFc.partialArgs = (lastFc.partialArgs || '') + fc.partialArgs
+        // 尝试更新解析后的 args 用于预览
+        if (lastFc.partialArgs.trim()) {
+          try {
+            lastFc.args = JSON.parse(lastFc.partialArgs)
+          } catch (e) { /* 继续累积 */ }
+        }
+      } else if (fc.args && Object.keys(fc.args).length > 0) {
+        lastFc.args = { ...lastFc.args, ...fc.args }
+      }
+      
+      merged = true
+    }
+  }
+  
+  if (!merged) {
+    // 找不到可合并的，添加新块
+    addFunctionCallToMessage(message, {
+      id: fc.id || generateId(),
+      name: fc.name || '',
+      args: fc.args || {},
+      partialArgs: fc.partialArgs,
+      index: fc.index
+    })
+  }
+}

@@ -290,32 +290,45 @@ export class StreamAccumulator {
                 }
                 
                 // 找不到可合并的块，作为新块添加
+                console.log(`[Accumulator] No mergeable FC found, adding new FC part`);
                 // 添加前尝试解析初始参数
                 if (fc.partialArgs) {
                     try {
                         fc.args = JSON.parse(fc.partialArgs);
                     } catch (e) {}
                 }
-
-                // 构建新 Part，保留非 functionCall 的属性（如 thoughtSignatures）
-                const newPart: ContentPart = { ...part };
+                
+                // 构建新 Part，但排除 API 原始格式的 thoughtSignature（单数）
+                const { thoughtSignature: rawSignature, ...restPart } = part as any;
+                const newPart: ContentPart = { ...restPart };
                 // 确保 functionCall 是深拷贝的，且处理了 args
                 newPart.functionCall = { ...fc };
                 if (fc.args) newPart.functionCall.args = { ...fc.args };
-
-                // 关键：如果没有 ID，立即生成
-                // 这确保前端接收到的 chunk 中的 functionCall 始终有 ID
-                // 解决前后端工具 ID 不一致的问题
-                if (!newPart.functionCall.id) {
-                    newPart.functionCall.id = `fc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+                
+                // 如果有 API 原始格式的 thoughtSignature，转换为 thoughtSignatures 格式
+                if (rawSignature) {
+                    newPart.thoughtSignatures = {
+                        ...(newPart.thoughtSignatures || {}),
+                        [this.providerType]: rawSignature
+                    };
                 }
-
+                
                 this.parts.push(newPart);
+                console.log(`[Accumulator] After adding, parts count: ${this.parts.length}`);
                 return;
             }
             
             // 其他非文本 Part（如图片、文件等）
-            this.parts.push({ ...part });
+            // 排除 API 原始格式的 thoughtSignature（单数），转换为 thoughtSignatures 格式
+            const { thoughtSignature: rawSig, ...restNonTextPart } = part as any;
+            const nonTextPart: ContentPart = { ...restNonTextPart };
+            if (rawSig) {
+                nonTextPart.thoughtSignatures = {
+                    ...(nonTextPart.thoughtSignatures || {}),
+                    [this.providerType]: rawSig
+                };
+            }
+            this.parts.push(nonTextPart);
             return;
         }
         
@@ -351,7 +364,16 @@ export class StreamAccumulator {
         }
         
         // 无法合并，添加新 part
-        this.parts.push({ ...part });
+        // 排除 API 原始格式的 thoughtSignature（单数），转换为 thoughtSignatures 格式
+        const { thoughtSignature: rawTextSig, ...restTextPart } = part as any;
+        const textPart: ContentPart = { ...restTextPart };
+        if (rawTextSig) {
+            textPart.thoughtSignatures = {
+                ...(textPart.thoughtSignatures || {}),
+                [this.providerType]: rawTextSig
+            };
+        }
+        this.parts.push(textPart);
         // 检测并转换完整的 JSON 工具调用
         this.extractAndConvertToolCalls();
     }

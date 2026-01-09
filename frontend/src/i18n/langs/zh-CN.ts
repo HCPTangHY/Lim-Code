@@ -205,7 +205,7 @@ const zhCN: LanguageMessages = {
 
         input: {
             placeholder: '输入消息...',
-            placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽添加路径)',
+            placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽或@添加路径)',
             send: '发送消息',
             stopGenerating: '停止生成',
             attachFile: '添加附件',
@@ -237,6 +237,15 @@ const zhCN: LanguageMessages = {
                 notExists: '不存在',
                 dragHint: '按住 Shift 拖拽工作区内的文本文件到此处添加',
                 dropHint: '释放鼠标添加文件'
+            },
+            filePicker: {
+                title: '选择文件',
+                subtitle: '在 @ 后输入文字筛选路径',
+                loading: '搜索中...',
+                empty: '未找到匹配的文件',
+                navigate: '导航',
+                select: '选择',
+                close: '关闭'
             },
             notifications: {
                 summarizeFailed: '总结失败: {error}',
@@ -536,7 +545,8 @@ const zhCN: LanguageMessages = {
                     file: '文件操作',
                     search: '搜索',
                     terminal: '终端',
-                    media: '媒体',
+                    lsp: '代码智能',
+                    media: '媒体处理',
                     mcp: 'MCP 工具',
                     other: '其他'
                 },
@@ -867,32 +877,11 @@ const zhCN: LanguageMessages = {
                 usage: {
                     title: '使用说明',
                     step1: '配置上方的 API URL、API Key 和模型名称',
-                    step2: '确保工具进"工具设置"中已启用',
+                    step2: '确保工具在"工具设置"中已启用',
                     step3: '在对话中让 AI 调用 generate_image 工具生成图片',
                     step4: '生成的图片会保存到工作区的 generated_images 目录',
                     warning: '请配置 API Key 后才能使用图像生成功能'
                 }
-            },
-            googleSearch: {
-                useDedicatedModel: {
-                    label: '使用专用搜索渠道',
-                    hint: '开启后，搜索请求将使用下方指定的渠道和模型，否则使用当前对话的渠道和模型。'
-                },
-                selectChannel: {
-                    label: '选择渠道',
-                    hint: '仅支持 Gemini 渠道（Google Search 依赖 Gemini 的 grounding 功能）',
-                    placeholder: '选择用于搜索的 Gemini 渠道'
-                },
-                selectModel: {
-                    label: '选择模型',
-                    hint: '只显示该渠道已添加的模型。如需添加更多模型，请前往渠道设置进行配置。',
-                    placeholder: '选择用于搜索的模型'
-                },
-                currentModelHint: '当前使用对话时的渠道和模型进行搜索',
-                warningHint: '请选择渠道和模型，否则将使用对话时的渠道和模型进行搜索',
-                noGeminiChannelError: '未找到可用的 Gemini 渠道。Google Search 工具仅支持 Gemini 渠道，请先在渠道设置中添加并启用 Gemini 渠道。',
-                invalidChannelError: '当前选择的渠道不是 Gemini 类型，请重新选择 Gemini 渠道。',
-                saving: '正在保存...'
             },
             mcpSettings: {
                 toolbar: {
@@ -1187,7 +1176,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.30',
+                    version: '版本：1.0.38',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1315,7 +1304,8 @@ const zhCN: LanguageMessages = {
                     file: '文件操作',
                     search: '搜索',
                     terminal: '终端',
-                    media: '媒体',
+                    lsp: '代码智能',
+                    media: '媒体处理',
                     other: '其他'
                 },
                 dependency: {
@@ -1636,17 +1626,7 @@ const zhCN: LanguageMessages = {
                     copied: '已复制',
                     copyNew: '复制新内容',
                     deletedLines: '删除',
-                    addedLines: '新增',
-                    userEdited: '用户已编辑',
-                    userEditedContent: '用户修改后的内容',
-                    save: '保存',
-                    reject: '拒绝',
-                    saveChanges: '保存更改 (Ctrl+S)',
-                    rejectChanges: '放弃更改',
-                    waitingForAction: '等待用户操作',
-                    saved: '已保存',
-                    rejected: '已拒绝',
-                    waitingOthers: '等待其他文件...'
+                    addedLines: '新增'
                 },
                 createDirectoryPanel: {
                     title: '创建目录',
@@ -1703,6 +1683,39 @@ const zhCN: LanguageMessages = {
                         unchanged: '未变',
                         write: '写入'
                     }
+                }
+            },
+            lsp: {
+                getSymbols: '获取符号',
+                gotoDefinition: '跳转定义',
+                findReferences: '查找引用',
+                getSymbolsPanel: {
+                    title: '文件符号',
+                    totalFiles: '共 {count} 个文件',
+                    totalSymbols: '共 {count} 个符号',
+                    noSymbols: '未找到符号',
+                    symbolCount: '{count} 个符号',
+                    collapse: '收起',
+                    expandRemaining: '展开剩余 {count} 个',
+                    copyAll: '复制全部',
+                    copied: '已复制'
+                },
+                gotoDefinitionPanel: {
+                    title: '定义',
+                    definitionFound: '找到定义',
+                    noDefinition: '未找到定义',
+                    lines: '{count} 行',
+                    copyCode: '复制代码',
+                    copied: '已复制'
+                },
+                findReferencesPanel: {
+                    title: '引用',
+                    totalReferences: '共 {count} 个引用',
+                    totalFiles: '{count} 个文件',
+                    noReferences: '未找到引用',
+                    referencesInFile: '{count} 个引用',
+                    collapse: '收起',
+                    expandRemaining: '展开剩余 {count} 个'
                 }
             },
             mcp: {
@@ -1807,7 +1820,7 @@ const zhCN: LanguageMessages = {
                         disabled: '已禁用'
                     },
                     checkingDependency: '检查依赖状态...',
-                    dependencyMessage: '抠图功能需要安装本地 AI 抠图引擎。',
+                    dependencyMessage: '抠图功能需要 sharp 库来处理图像。',
                     batchTasks: '批量任务 ({count})',
                     removeTask: '抠图任务',
                     subjectDescription: '主体描述',
@@ -1907,7 +1920,6 @@ const zhCN: LanguageMessages = {
             search: {
                 findFiles: '查找文件',
                 searchInFiles: '在文件中搜索',
-                googleSearch: 'Google 搜索',
                 filesFound: '找到文件',
                 matchesFound: '找到匹配',
                 noResults: '无结果',
