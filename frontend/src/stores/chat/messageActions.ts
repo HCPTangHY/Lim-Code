@@ -166,6 +166,13 @@ export async function retryFromMessage(
   state.toolCallBuffer.value = ''
   state.inToolCall.value = null
   
+  // 重置 diff 相关状态（防止上一轮对话的状态影响新请求）
+  state.processedDiffTools.value = new Map()
+  state.handledDiffIds.value = new Set()
+  state.handledFilePaths.value = new Map()
+  state.pendingDiffToolIds.value = []
+  state.pendingAnnotation.value = ''
+  
   const assistantMessageId = generateId()
   const assistantMessage: Message = {
     id: assistantMessageId,

@@ -177,20 +177,20 @@ export async function loadDiffContent(diffContentId: string): Promise<{
  */
 export interface DiffActionResult {
   success: boolean
-  hasAnnotation?: boolean
-  fullAnnotation?: string
 }
 
 /**
  * 接受 diff 修改（保存文件）
+ * 
+ * 注意：批注不在此处传递，而是在所有 diff 处理完成后
+ * 通过 continueDiffWithAnnotation 统一从 inputValue 捕获并发送
  *
  * @param diffId Diff ID
- * @param annotation 可选的批注内容，会发送给 AI
- * @returns 操作结果，包含是否成功和处理后的批注
+ * @returns 操作结果
  */
-export async function acceptDiff(diffId: string, annotation?: string): Promise<DiffActionResult> {
+export async function acceptDiff(diffId: string): Promise<DiffActionResult> {
   try {
-    const result = await sendToExtension<DiffActionResult>('diff.accept', { diffId, annotation })
+    const result = await sendToExtension<DiffActionResult>('diff.accept', { diffId })
     return result
   } catch (err) {
     console.error('Failed to accept diff:', err)
@@ -200,14 +200,16 @@ export async function acceptDiff(diffId: string, annotation?: string): Promise<D
 
 /**
  * 拒绝 diff 修改（放弃更改）
+ * 
+ * 注意：批注不在此处传递，而是在所有 diff 处理完成后
+ * 通过 continueDiffWithAnnotation 统一从 inputValue 捕获并发送
  *
  * @param diffId Diff ID
- * @param annotation 可选的批注内容，会发送给 AI
- * @returns 操作结果，包含是否成功和处理后的批注
+ * @returns 操作结果
  */
-export async function rejectDiff(diffId: string, annotation?: string): Promise<DiffActionResult> {
+export async function rejectDiff(diffId: string): Promise<DiffActionResult> {
   try {
-    const result = await sendToExtension<DiffActionResult>('diff.reject', { diffId, annotation })
+    const result = await sendToExtension<DiffActionResult>('diff.reject', { diffId })
     return result
   } catch (err) {
     console.error('Failed to reject diff:', err)

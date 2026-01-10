@@ -172,10 +172,15 @@ export const useChatStore = defineStore('chat', () => {
       updateConversationAfterMessage: () => updateConversationAfterMessage(state)
     })
 
-    // 流式结束/取消/错误时，重置内部发送标记（避免后续 continueWithAnnotation 被误判为重复）
+    // 流式结束/取消/错误时，重置内部发送标记和 diff 相关状态
     if (chunk.type === 'complete' || chunk.type === 'cancelled' || chunk.type === 'error') {
       isSendingAnnotation = false
       state.isSendingDiffContinue.value = false
+      
+      // 清空 diff 相关状态
+      state.processedDiffTools.value = new Map()
+      state.handledDiffIds.value = new Set()
+      state.handledFilePaths.value = new Map()
     }
 
     // diff 确认流程：当后端返回 pendingDiffToolIds 后，如果用户已提前处理完 diff，则自动继续
@@ -186,7 +191,7 @@ export const useChatStore = defineStore('chat', () => {
       state.isSendingDiffContinue.value = false
 
       if (areAllRequiredDiffsProcessed() && !isSendingAnnotation) {
-        void continueDiffWithAnnotation(getDiffAnnotation()).catch(console.error)
+        void continueDiffWithAnnotation().catch(console.error)
       }
     }
   }
@@ -239,14 +244,6 @@ export const useChatStore = defineStore('chat', () => {
     return false
   }
 
-  function setDiffAnnotation(annotation: string): void {
-    state.diffAnnotation.value = annotation
-  }
-
-  function getDiffAnnotation(): string {
-    return state.diffAnnotation.value || ''
-  }
-
   function addHandledDiffId(diffId: string): void {
     state.handledDiffIds.value.add(diffId)
     state.handledDiffIds.value = new Set(state.handledDiffIds.value)
@@ -274,8 +271,11 @@ export const useChatStore = defineStore('chat', () => {
 
   /**
    * diff 确认完成后继续对话（会发送 continueWithAnnotation 流请求）
+   * 
+   * 【设计简化】批注在此处一次性从 inputValue 捕获，而非在保存/拒绝时分散捕获
+   * 这样用户可以在任何 diff 处理完成前输入批注，更符合直觉
    */
-  async function continueDiffWithAnnotation(annotation: string): Promise<void> {
+  async function continueDiffWithAnnotation(): Promise<void> {
     if (isSendingAnnotation) return
 
     const conversationId = state.currentConversationId.value
@@ -286,16 +286,20 @@ export const useChatStore = defineStore('chat', () => {
     isSendingAnnotation = true
     state.isSendingDiffContinue.value = true
 
-    // 不要清空 processedDiffTools：否则 UI 会回退到 pending
+    // 清空 diff 相关状态（为新一轮工具迭代做准备）
+    // processedDiffTools 也需要清空，否则新工具会被误判为已处理
+    state.processedDiffTools.value = new Map()
+    state.handledDiffIds.value = new Set()
+    state.handledFilePaths.value = new Map()
+    state.pendingDiffToolIds.value = []
     state.error.value = null
     state.isLoading.value = true
-    state.pendingDiffToolIds.value = []
     state.toolCallBuffer.value = ''
     state.inToolCall.value = null
 
-    // 合并 pendingAnnotation（工具确认阶段）和 diffAnnotation（diff 阶段）
+    // 【简化】直接从 inputValue 捕获批注，合并 pendingAnnotation（工具确认阶段遗留）
     const storedAnnotation = state.pendingAnnotation.value
-    const newAnnotation = (annotation || '').trim()
+    const newAnnotation = state.inputValue.value.trim()
 
     let finalAnnotation = ''
     if (storedAnnotation && newAnnotation) {
@@ -304,8 +308,11 @@ export const useChatStore = defineStore('chat', () => {
       finalAnnotation = storedAnnotation || newAnnotation
     }
 
-    // pendingAnnotation 已在 UI 中展示过，发送后清空
+    // 清空已使用的状态
     state.pendingAnnotation.value = ''
+    if (newAnnotation) {
+      state.inputValue.value = '' // 批注已捕获，清空输入框
+    }
 
     // 更新对话元数据（尽力而为）
     const conv = state.conversations.value.find(c => c.id === conversationId)
@@ -488,14 +495,12 @@ export const useChatStore = defineStore('chat', () => {
     setInputValue,
     clearInputValue,
 
-    // diff 确认/批注流程（旧版兼容）
+    // diff 确认/批注流程
     markDiffToolProcessed,
     isDiffToolProcessed,
     getDiffToolDecision,
     areAllRequiredDiffsProcessed,
     hasRemainingRequiredDiffs,
-    setDiffAnnotation,
-    getDiffAnnotation,
     continueDiffWithAnnotation,
     addHandledDiffId,
     isHandledDiffId,

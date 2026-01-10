@@ -172,6 +172,7 @@ async function writeSingleFile(entry: WriteFileEntry, isMultiRoot: boolean): Pro
             status: wasAccepted ? 'accepted' : 'rejected',
             error: wasAccepted ? undefined : 'Diff was rejected',
             diffContentId,
+            pendingDiffId: pendingDiff.id,
             userEditedContent,
             message
         };

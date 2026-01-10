@@ -375,16 +375,16 @@ function resetDiffState(): void {
 // 原来的 watch(requiredDiffToolIds) 被移除，原因：
 // 1. 存在竞态条件：fallback 发请求后，后端返回 pendingDiffToolIds，watch 触发导致重复请求
 // 2. watch 的触发时机不可控，容易与用户直接操作（点击按钮）冲突
-// 3. 现在统一由 markDiffAsAccepted/markDiffAsRejected 调用 tryToContinueDiff 处理
+// 3. 现在统一由 markDiffAsAccepted 调用 tryToContinueDiff 处理
 
-// 标记工具为已接受，并检查是否需要继续对话
-async function markDiffAsAccepted(tool: ToolUsage): Promise<void> {
+// 标记工具为已接受，并检查是否需要继续对话（用于手动保存通知）
+function markDiffAsAccepted(tool: ToolUsage): void {
   const paths = getToolFilePaths(tool)
   for (const path of paths) {
     pendingDiffMap.value.delete(path)
   }
   chatStore.markDiffToolProcessed(tool.id, 'accept')
-  await tryToContinueDiff()
+  tryToContinueDiff()
 }
 
 /**
@@ -397,44 +397,29 @@ async function markDiffAsAccepted(tool: ToolUsage): Promise<void> {
  * 这是唯一的继续对话触发源，避免了 watch 和直接调用的竞态条件。
  */
 async function tryToContinueDiff(): Promise<void> {
-  console.log('[ToolMessage] tryToContinueDiff called:', {
-    pendingDiffToolIds: chatStore.pendingDiffToolIds,
-    processedDiffTools: Array.from(processedDiffTools.value.keys()),
-    isSendingDiffContinue: isSendingDiffContinue.value
-  })
-  
   // 防止重复发送
   if (isSendingDiffContinue.value) {
-    console.log('[ToolMessage] tryToContinueDiff: isSendingDiffContinue=true, skip')
     return
   }
   
   // 场景 1：后端发送了 pendingDiffToolIds
   if (chatStore.pendingDiffToolIds.length > 0) {
-    console.log('[ToolMessage] tryToContinueDiff: using pendingDiffToolIds logic')
     if (!chatStore.areAllRequiredDiffsProcessed()) {
-      console.log('[ToolMessage] tryToContinueDiff: not all required diffs processed, wait')
       return
     }
   } else {
     // 场景 2：pendingDiffToolIds 为空
-    // 【关键】如果 pendingDiffToolIds 为空，说明后端的 toolIteration 还没到达
+    // 如果 pendingDiffToolIds 为空，说明后端的 toolIteration 还没到达
     // 此时不应该发送 continueWithAnnotation，应该等待 toolIteration
-    // 因为后端的 handleChatStream 需要先添加 functionResponse 到历史，然后 yield toolIteration
-    // 如果我们在 toolIteration 到达之前发送 continueWithAnnotation，历史中会缺少 tool result
-    console.log('[ToolMessage] tryToContinueDiff: pendingDiffToolIds is empty, wait for backend toolIteration')
     return
   }
   
   // 所有工具都已处理，继续对话
-  console.log('[ToolMessage] tryToContinueDiff: all processed, calling continueDiffWithAnnotation')
-  // 批注已保存在 store 级别（chatStore.diffAnnotation）
-  // continueDiffWithAnnotation 会自动读取并使用
-  const annotationToSend = chatStore.getDiffAnnotation()
+  // 批注由 continueDiffWithAnnotation 直接从 inputValue 捕获
   resetDiffState()
 
   try {
-    await chatStore.continueDiffWithAnnotation(annotationToSend)
+    await chatStore.continueDiffWithAnnotation()
   } catch (err) {
     console.error('continueDiffWithAnnotation failed:', err)
   }
@@ -445,16 +430,6 @@ async function tryToContinueDiff(): Promise<void> {
 async function handleAcceptDiff(tool: ToolUsage) {
   const diffIds = getDiffIds(tool)
   const resultData = (tool.result as any)?.data
-  console.log('[ToolMessage] handleAcceptDiff ENTRY:', {
-    toolId: tool.id,
-    toolName: tool.name,
-    diffIds,
-    handledDiffIds: Array.from(chatStore.handledDiffIds),
-    pendingDiffMapEntries: Array.from(pendingDiffMap.value.entries()),
-    toolFilePaths: getToolFilePaths(tool),
-    resultDataPendingDiffId: resultData?.pendingDiffId,
-    resultDataResults: resultData?.results?.map((r: any) => ({ path: r.path, pendingDiffId: r.pendingDiffId }))
-  })
   
   if (diffIds.length === 0 && !requiredDiffToolIds.value.has(tool.id)) return
   if (diffLoadingIds.value.has(tool.id)) return
@@ -466,22 +441,8 @@ async function handleAcceptDiff(tool: ToolUsage) {
 
   diffLoadingIds.value.add(tool.id)
   try {
-    // 检查是否是第一次 diff 操作（store 级别批注为空且没有已处理的工具）
-    const isFirst = processedDiffTools.value.size === 0 && !chatStore.getDiffAnnotation()
-    const annotation = isFirst ? chatStore.inputValue.trim() : ''
-
-    if (isFirst && annotation) {
-      chatStore.setInputValue('')
-      // 保存批注到 store 级别
-      chatStore.setDiffAnnotation(annotation)
-    }
-
-    // 只处理当前这一个 diffId
-    const result = await acceptDiff(currentDiffId, annotation || undefined)
-    if (isFirst && result.fullAnnotation) {
-      // 更新为后端返回的格式化批注
-      chatStore.setDiffAnnotation(result.fullAnnotation)
-    }
+    // 【简化】只处理文件保存，批注由 continueDiffWithAnnotation 统一捕获
+    await acceptDiff(currentDiffId)
 
     // 标记此 diffId 为已处理（使用 store 级别状态）
     chatStore.addHandledDiffId(currentDiffId)
@@ -520,16 +481,19 @@ async function handleAcceptDiff(tool: ToolUsage) {
         foundPath = true
       }
     }
+    
+    // 方法4：对于 write_file，直接从 tool.args.files 获取第一个匹配的路径
+    if (!foundPath && tool.name === 'write_file') {
+      const files = tool.args?.files as Array<{ path: string }> | undefined
+      if (files && files.length > 0) {
+        chatStore.addHandledFilePath(files[0].path, 'accept')
+        foundPath = true
+      }
+    }
 
     // 检查是否所有文件都已处理
-    // 不能依赖 getDiffIds，因为后端是顺序创建 pending diff 的
     const totalFiles = allPaths.length
     const handledFiles = chatStore.getHandledFilePathsCount(allPaths)
-    console.log('[ToolMessage] handleAcceptDiff after processing:', {
-      processedDiffId: currentDiffId,
-      totalFiles,
-      handledFiles
-    })
     
     if (handledFiles >= totalFiles) {
       // 所有文件都已处理，标记工具为已处理
@@ -542,27 +506,10 @@ async function handleAcceptDiff(tool: ToolUsage) {
   }
 }
 
-// 标记工具为已拒绝，并检查是否需要继续对话
-async function markDiffAsRejected(tool: ToolUsage): Promise<void> {
-  const paths = getToolFilePaths(tool)
-  for (const path of paths) {
-    pendingDiffMap.value.delete(path)
-  }
-  chatStore.markDiffToolProcessed(tool.id, 'reject')
-  await tryToContinueDiff()
-}
-
 // 拒绝 diff（点击按钮触发）
 // 每次只处理一个文件，顺序处理
 async function handleRejectDiff(tool: ToolUsage) {
   const diffIds = getDiffIds(tool)
-  console.log('[ToolMessage] handleRejectDiff:', {
-    toolId: tool.id,
-    toolName: tool.name,
-    diffIds,
-    pendingDiffMapPaths: Array.from(pendingDiffMap.value.keys()),
-    toolFilePaths: getToolFilePaths(tool)
-  })
   
   if (diffIds.length === 0 && !requiredDiffToolIds.value.has(tool.id)) return
   if (diffLoadingIds.value.has(tool.id)) return
@@ -574,22 +521,8 @@ async function handleRejectDiff(tool: ToolUsage) {
 
   diffLoadingIds.value.add(tool.id)
   try {
-    // 检查是否是第一次 diff 操作（store 级别批注为空且没有已处理的工具）
-    const isFirst = processedDiffTools.value.size === 0 && !chatStore.getDiffAnnotation()
-    const annotation = isFirst ? chatStore.inputValue.trim() : ''
-
-    if (isFirst && annotation) {
-      chatStore.setInputValue('')
-      // 保存批注到 store 级别
-      chatStore.setDiffAnnotation(annotation)
-    }
-
-    // 只处理当前这一个 diffId
-    const result = await rejectDiff(currentDiffId, annotation || undefined)
-    if (isFirst && result.fullAnnotation) {
-      // 更新为后端返回的格式化批注
-      chatStore.setDiffAnnotation(result.fullAnnotation)
-    }
+    // 【简化】只处理文件拒绝，批注由 continueDiffWithAnnotation 统一捕获
+    await rejectDiff(currentDiffId)
 
     // 标记此 diffId 为已处理（使用 store 级别状态）
     chatStore.addHandledDiffId(currentDiffId)
@@ -629,16 +562,19 @@ async function handleRejectDiff(tool: ToolUsage) {
         foundPath = true
       }
     }
+    
+    // 方法4：对于 write_file，直接从 tool.args.files 获取第一个匹配的路径
+    if (!foundPath && tool.name === 'write_file') {
+      const files = tool.args?.files as Array<{ path: string }> | undefined
+      if (files && files.length > 0) {
+        chatStore.addHandledFilePath(files[0].path, 'reject')
+        foundPath = true
+      }
+    }
 
     // 检查是否所有文件都已处理
-    // 不能依赖 getDiffIds，因为后端是顺序创建 pending diff 的
     const totalFiles = allPaths.length
     const handledFiles = chatStore.getHandledFilePathsCount(allPaths)
-    console.log('[ToolMessage] handleRejectDiff after processing:', {
-      processedDiffId: currentDiffId,
-      totalFiles,
-      handledFiles
-    })
     
     if (handledFiles >= totalFiles) {
       // 所有文件都已处理，标记工具为已处理

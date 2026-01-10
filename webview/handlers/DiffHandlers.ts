@@ -46,21 +46,19 @@ export const loadDiffContent: MessageHandler = async (data, requestId, ctx) => {
 
 /**
  * 接受 diff 修改（保存文件）
+ * 
+ * 注意：批注不在此处处理，而是在所有 diff 处理完成后
+ * 通过 continueWithAnnotation 统一发送
  */
 export const acceptDiff: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { diffId, annotation } = data as { diffId: string; annotation?: string };
+    const { diffId } = data as { diffId: string };
     const diffManager = getDiffManager();
 
     // 手动保存模式：isAutoSave=false，会保留用户编辑；closeTab=true 关闭标签页
     const success = await diffManager.acceptDiff(diffId, true, false);
 
-    const fullAnnotation = (annotation || '').trim();
-    ctx.sendResponse(requestId, {
-      success,
-      hasAnnotation: !!fullAnnotation,
-      fullAnnotation
-    });
+    ctx.sendResponse(requestId, { success });
   } catch (error: any) {
     ctx.sendError(requestId, 'DIFF_ACCEPT_ERROR', error.message || 'Failed to accept diff');
   }
@@ -68,20 +66,18 @@ export const acceptDiff: MessageHandler = async (data, requestId, ctx) => {
 
 /**
  * 拒绝 diff 修改（放弃更改）
+ * 
+ * 注意：批注不在此处处理，而是在所有 diff 处理完成后
+ * 通过 continueWithAnnotation 统一发送
  */
 export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { diffId, annotation } = data as { diffId: string; annotation?: string };
+    const { diffId } = data as { diffId: string };
     const diffManager = getDiffManager();
 
     const success = await diffManager.rejectDiff(diffId);
 
-    const fullAnnotation = (annotation || '').trim();
-    ctx.sendResponse(requestId, {
-      success,
-      hasAnnotation: !!fullAnnotation,
-      fullAnnotation
-    });
+    ctx.sendResponse(requestId, { success });
   } catch (error: any) {
     ctx.sendError(requestId, 'DIFF_REJECT_ERROR', error.message || 'Failed to reject diff');
   }

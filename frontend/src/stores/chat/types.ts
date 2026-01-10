@@ -110,7 +110,7 @@ export interface ChatStoreState {
   /** 工作区筛选模式 */
   workspaceFilter: Ref<WorkspaceFilter>
 
-  // ============ diff 确认/批注流程（旧版兼容） ============
+  // ============ diff 确认/批注流程 ============
 
   /** 等待后端确认的 diff 工具 ID 列表（apply_diff / write_file） */
   pendingDiffToolIds: Ref<string[]>
@@ -123,9 +123,6 @@ export interface ChatStoreState {
 
   /** 是否正在发送 diff 的 continueWithAnnotation（防止重复触发） */
   isSendingDiffContinue: Ref<boolean>
-
-  /** diff 阶段的用户批注（由 ToolMessage 捕获） */
-  diffAnnotation: Ref<string>
 
   /** 已处理的 diffId（文件级） */
   handledDiffIds: Ref<Set<string>>

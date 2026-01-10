@@ -86,6 +86,12 @@ export function hasFileModificationToolInResults(
 
 /**
  * 获取需要用户确认的文件修改工具 ID 列表
+ * 
+ * 判断逻辑：
+ * - 跳过被用户在"工具确认"阶段拒绝的工具（rejected=true）
+ * - 检查 results 中是否有 pendingDiffId，有则需要确认
+ * - 对于 apply_diff，检查 data.pendingDiffId
+ * - 对于 write_file，检查 data.results[].pendingDiffId
  */
 export function getFileModificationToolIds(
     toolResults: Array<{ id?: string; name: string; result: Record<string, unknown> }>
@@ -96,10 +102,34 @@ export function getFileModificationToolIds(
     for (const r of toolResults) {
         const result = r.result as any;
 
+        // 跳过在"工具确认"阶段被拒绝执行的工具
         if (result?.rejected) continue;
-        if (result?.error) continue;
+        
+        // 跳过非文件修改工具
         if (!toolNameSet.has(r.name)) continue;
-        if (r.id) ids.push(r.id);
+        
+        // 检查是否有 pendingDiffId（说明有待确认的 diff）
+        const data = result?.data;
+        let hasPendingDiff = false;
+        
+        // apply_diff: data.pendingDiffId
+        if (data?.pendingDiffId) {
+            hasPendingDiff = true;
+        }
+        
+        // write_file: data.results[].pendingDiffId
+        if (!hasPendingDiff && data?.results && Array.isArray(data.results)) {
+            for (const fileResult of data.results) {
+                if (fileResult?.pendingDiffId) {
+                    hasPendingDiff = true;
+                    break;
+                }
+            }
+        }
+        
+        if (hasPendingDiff && r.id) {
+            ids.push(r.id);
+        }
     }
 
     return ids;

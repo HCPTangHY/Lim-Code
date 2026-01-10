@@ -95,9 +95,6 @@ export function createChatState(): ChatStoreState {
   /** 是否正在发送 diff 的 continueWithAnnotation（防止重复触发） */
   const isSendingDiffContinue = ref(false)
 
-  /** diff 阶段的用户批注（由 ToolMessage 捕获） */
-  const diffAnnotation = ref('')
-
   /** 已处理的 diffId（文件级） */
   const handledDiffIds = ref<Set<string>>(new Set())
 
@@ -126,12 +123,11 @@ export function createChatState(): ChatStoreState {
     inputValue,
     workspaceFilter,
 
-    // diff 确认/批注流程（旧版兼容）
+    // diff 确认/批注流程
     pendingDiffToolIds,
     pendingAnnotation,
     processedDiffTools,
     isSendingDiffContinue,
-    diffAnnotation,
     handledDiffIds,
     handledFilePaths
   }
