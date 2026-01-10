@@ -1648,7 +1648,13 @@ const zhCN: LanguageMessages = {
                     copied: '已复制',
                     copyNew: '复制新内容',
                     deletedLines: '删除',
-                    addedLines: '新增'
+                    addedLines: '新增',
+                    save: '保存',
+                    reject: '拒绝',
+                    saved: '已保存',
+                    rejected: '已拒绝',
+                    waitingOthers: '等待其他文件...',
+                    userEdited: '用户已编辑'
                 },
                 createDirectoryPanel: {
                     title: '创建目录',

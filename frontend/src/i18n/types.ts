@@ -1707,6 +1707,12 @@ export interface LanguageMessages {
                     copyNew: string;
                     deletedLines: string;
                     addedLines: string;
+                    save: string;
+                    reject: string;
+                    saved: string;
+                    rejected: string;
+                    waitingOthers: string;
+                    userEdited: string;
                 };
                 /** create_directory 内容面板 */
                 createDirectoryPanel: {

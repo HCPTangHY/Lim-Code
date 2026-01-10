@@ -1648,7 +1648,13 @@ const en: LanguageMessages = {
                     copied: 'Copied',
                     copyNew: 'Copy new content',
                     deletedLines: 'Deleted',
-                    addedLines: 'Added'
+                    addedLines: 'Added',
+                    save: 'Save',
+                    reject: 'Reject',
+                    saved: 'Saved',
+                    rejected: 'Rejected',
+                    waitingOthers: 'Waiting for other files...',
+                    userEdited: 'User edited'
                 },
                 createDirectoryPanel: {
                     title: 'Create Directory',
